@@ -1,0 +1,326 @@
+.public-view-container {
+    max-width: 950px; /* Slightly wider */
+    margin: 2rem auto;
+    padding: 1rem;
+}
+
+.public-card {
+    background-color: var(--white-color);
+    border-radius: var(--border-radius);
+    padding: clamp(1.5rem, 5vw, 2.5rem); /* Responsive padding */
+    box-shadow: var(--shadow-md);
+}
+
+.public-card-header {
+    text-align: center;
+    color: var(--primary-color);
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+    font-size: clamp(1.5rem, 4vw, 2rem); /* Responsive font size */
+}
+
+.public-card-subheader {
+    text-align: center;
+    color: var(--dark-gray);
+    margin-top: 0;
+    margin-bottom: 1.5rem; /* Reduced margin */
+    font-size: 1.1rem;
+}
+
+/* --- Search Bar Styles --- */
+.search-bar-container {
+    position: relative;
+    margin-bottom: 2.5rem; /* Space below search bar */
+}
+
+.search-bar-container svg {
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
+    stroke: var(--dark-gray);
+    pointer-events: none; /* Prevent icon from blocking input clicks */
+}
+
+.search-bar {
+    width: 100%;
+    padding: 0.85rem 1rem 0.85rem 3rem; /* Add padding for icon */
+    border: 1px solid var(--medium-gray);
+    border-radius: var(--border-radius);
+    box-sizing: border-box; 
+    font-size: 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    background-color: var(--white-color);
+}
+
+.search-bar:focus {
+    outline: none;
+    border-color: var(--highlight-color);
+    box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.25);
+}
+/* --- End of Search Bar Styles --- */
+
+
+.selection-grid {
+    display: grid;
+    /* Adjust minmax for better fit on various screens */
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); 
+    gap: 1.5rem;
+}
+
+.selection-card {
+    border: 1px solid var(--medium-gray);
+    border-radius: var(--border-radius);
+    padding: 1.5rem;
+    cursor: pointer;
+    transition: transform 0.2s ease-out, box-shadow 0.2s ease-out, border-color 0.2s ease-out;
+    border-left: 5px solid var(--primary-color);
+    display: flex;
+    flex-direction: column;
+    background-color: var(--white-color); /* Ensure background for shadow */
+}
+
+.selection-card:hover {
+    transform: translateY(-4px) scale(1.02); /* Lift and slightly enlarge */
+    box-shadow: var(--shadow-md);
+    border-left-color: var(--highlight-color);
+}
+
+.selection-card:active {
+    transform: translateY(-1px) scale(1); /* Subtle press effect */
+    box-shadow: var(--shadow-sm);
+}
+
+
+.selection-card h3 {
+    margin: 0 0 0.5rem 0;
+    color: var(--primary-color);
+    font-size: 1.25rem;
+}
+
+.selection-card p {
+    margin: 0;
+    color: var(--dark-gray);
+    font-size: 0.9rem;
+    flex-grow: 1; 
+}
+
+.clinic-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 1.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--medium-gray);
+}
+
+.stat-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.stat-item svg {
+    width: 18px; 
+    height: 18px;
+    fill: none; 
+    stroke: var(--dark-gray);
+    stroke-width: 2; 
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.stat-item span {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary-color);
+}
+
+.back-button-public {
+    background: transparent;
+    border: none;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--dark-gray);
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: var(--border-radius);
+    transition: background-color 0.2s;
+}
+.back-button-public:hover {
+    color: var(--primary-color);
+    background-color: rgba(0, 51, 102, 0.05);
+}
+
+/* Live Queue Specific Styles */
+.live-queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-top: 1.5rem; 
+}
+
+.queue-token-public {
+    display: flex;
+    align-items: center;
+    padding: 1rem;
+    background-color: var(--light-gray);
+    border-radius: var(--border-radius);
+    border: 1px solid var(--medium-gray);
+    transition: background-color 0.2s; 
+}
+
+.token-position {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--dark-gray);
+    width: 50px;
+    text-align: center;
+    flex-shrink: 0; 
+}
+
+.token-details {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--medium-gray);
+    padding-left: 1rem;
+    min-width: 0; 
+}
+
+.token-number-public {
+    font-weight: 600;
+    color: var(--text-color);
+    white-space: nowrap; 
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.token-time-public {
+    font-size: 0.9rem;
+    color: var(--primary-color);
+}
+
+.token-status-public {
+    padding: 0.4rem 0.8rem;
+    border-radius: 15px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: capitalize;
+    color: var(--white-color);
+    margin-left: 1rem; 
+    flex-shrink: 0; 
+}
+
+.token-status-public.status-waiting { background-color: var(--status-waiting); color: var(--text-color); }
+.token-status-public.status-confirmed { background-color: var(--status-confirmed); }
+.token-status-public.status-in_consultancy { background-color: var(--status-in_consultancy); }
+
+/* --- NEW: Date Picker Styles --- */
+.queue-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap; /* Allow wrapping on small screens */
+    gap: 1.5rem; /* Space between title and picker */
+    margin-bottom: 1.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--medium-gray);
+}
+
+.queue-header-title {
+    flex-grow: 1; /* Allow title to take up space */
+}
+
+/* Make headers inside this container align left */
+.queue-header .public-card-header,
+.queue-header .public-card-subheader {
+    text-align: left;
+    margin-bottom: 0;
+}
+
+.queue-header-controls {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0; /* Prevent date picker from shrinking too much */
+}
+
+.queue-header-controls label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--dark-gray);
+    margin-bottom: 0.25rem;
+}
+
+.queue-date-picker {
+    padding: 0.5rem 0.75rem;
+    font-size: 1rem;
+    border: 1px solid var(--medium-gray);
+    border-radius: var(--border-radius);
+    background-color: var(--white-color);
+    color: var(--text-color);
+    font-family: var(--font-family-sans-serif);
+    min-width: 180px; /* Give it a reasonable default width */
+}
+
+.queue-date-picker:focus {
+    outline: none;
+    border-color: var(--highlight-color);
+    box-shadow: 0 0 0 3px rgba(255, 152, 0, 0.25);
+}
+/* --- End of Date Picker Styles --- */
+
+
+/* Media Query for better mobile layout */
+@media (max-width: 600px) {
+    .public-view-container {
+        margin: 1rem auto;
+        padding: 0.5rem;
+    }
+    .selection-grid {
+        grid-template-columns: 1fr; 
+        gap: 1rem;
+    }
+     .public-card {
+        padding: 1.5rem;
+    }
+    .search-bar-container {
+        margin-bottom: 1.5rem; /* Adjust margin */
+    }
+    .queue-token-public {
+        flex-direction: column; 
+        align-items: flex-start;
+        gap: 0.5rem;
+    }
+    .token-position {
+        width: auto;
+        font-size: 1.2rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--medium-gray);
+        margin-bottom: 0.5rem;
+    }
+    .token-details {
+        border-left: none;
+        padding-left: 0;
+    }
+    .token-status-public {
+        margin-left: 0; 
+        margin-top: 0.5rem; 
+        align-self: flex-start; 
+    }
+    /* --- NEW: Adjust queue header on mobile --- */
+    .queue-header {
+        flex-direction: column;
+        align-items: flex-start; /* Align all items to the start */
+        gap: 1rem;
+    }
+    .queue-header-controls {
+        width: 100%; /* Make date picker container full width */
+    }
+    .queue-date-picker {
+        width: 100%; /* Make date picker full width */
+        box-sizing: border-box; /* Include padding in width */
+    }
+}
+

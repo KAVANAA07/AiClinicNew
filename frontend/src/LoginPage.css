@@ -1,0 +1,28 @@
+/* Styles for the new unified login page with tabs */
+.login-tabs {
+    display: flex;
+    margin-bottom: 2rem;
+    border-radius: var(--border-radius);
+    background-color: var(--light-gray);
+    overflow: hidden;
+    border: 1px solid var(--medium-gray);
+}
+
+.tab {
+    flex: 1;
+    padding: 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    border: none;
+    background-color: transparent;
+    color: var(--dark-gray);
+    transition: all 0.2s ease-in-out;
+}
+
+.tab.active {
+    background-color: var(--primary-color);
+    color: var(--white-color);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
