@@ -134,5 +134,7 @@ Q_CLUSTER = {
     'queue_limit': 50,
     'catch_up': False,
     # This will correctly default to localhost if REDIS_URL isn't set
-    'redis': os.environ.get('REDIS_URL', 'redis://localhost:6379/0') 
+    'redis': os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
+
+    
 }

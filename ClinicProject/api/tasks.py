@@ -3,7 +3,7 @@ from datetime import timedelta, datetime
 from .models import Token, Patient # Make sure Token and Patient are imported
 from .utils.utils import send_sms_notification
 # --- NEW: Import async_task ---
-from django_q.tasks import async_task
+from django_q.tasks import async_task # pyright: ignore[reportMissingImports]
 import logging
 
 logger = logging.getLogger(__name__)

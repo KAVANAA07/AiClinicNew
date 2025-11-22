@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import './App.css';
 import PublicHomePage from './PublicHomePage';
@@ -6,7 +6,7 @@ import LoginPage from './LoginPage';
 import './LoginPage.css';
 // --- LOGO IMPORT ---
 import PatientAISummary from './components/PatientAISummary';
-
+import DoctorSmartSearch from './DoctorSmartSearch';
 import medqLogo from './logo.jpg'; // Assuming logo.png is in the src folder
 
 // --- API Configuration ---
@@ -332,39 +332,34 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
                                         <span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span>
                                     </div>
                                     <div className="queue-card-body">
-                                        <p className="patient-name">{token.patient.name}</p>
-                                        <p><strong>Age:</strong> {token.patient.age}</p>
-                                        <p><strong>Doctor:</strong> {token.doctor}</p> 
-                                        
-                                        {token.appointment_time && (
-                                            <p className="appointment-time-display">
-                                                <strong>Time:</strong> {formatTime(token.appointment_time)}
-                                            </p>
-                                        )}
+                                            <p className="patient-name">{token.patient.name}</p>
+                                            <p><strong>Age:</strong> {token.patient.age}</p>
+                                            <p><strong>Doctor:</strong> {token.doctor.name}</p> 
+                                            
+                                            {token.appointment_time && (
+                                                <p className="appointment-time-display">
+                                                    <strong>Time:</strong> {formatTime(token.appointment_time)}
+                                                </p>
+                                            )}
 
-                                        {token.distance_km != null && ['waiting', 'confirmed'].includes(token.status) && (
-                                            <p className="patient-distance">
-                                                <LocationIcon />
-                                                {token.distance_km <= 0.1 ? 'At Clinic' : `${token.distance_km.toFixed(1)} km away`} 
-                                            </p>
-                                        )}
+                                            {token.distance_km != null && ['waiting', 'confirmed'].includes(token.status) && (
+                                                <p className="patient-distance">
+                                                    <LocationIcon />
+                                                    {token.distance_km <= 0.1 ? 'At Clinic' : `${token.distance_km.toFixed(1)} km away`} 
+                                                </p>
+                                            )}
                                     </div>
-                                    {/* --- MODIFIED: Receptionist Footer Buttons --- */}
                                     <div className="queue-card-footer">
-                                        {/* Show Confirm button only if status is waiting (like patient rule) */}
-                                        {token.status === 'waiting' && (
-                                            <button onClick={() => handleStaffUpdateStatus(token.id, 'confirmed')} className="confirm-button">Confirm Arrival</button>
-                                        )}
-                                        {/* Show Cancel/Skip buttons for active tokens */}
-                                        {['waiting', 'confirmed', 'in_consultancy'].includes(token.status) && (
-                                            <>
-                                                <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="cancel-button" style={{marginTop:'0.5rem'}}>Cancel Token</button>
-                                                <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="secondary-button" style={{backgroundColor: 'var(--status-skipped)', marginTop:'0.5rem'}}>Mark as Skipped</button>
-                                            </>
-                                        )}
-                                        {/* "View History" button is REMOVED */}
+                                            {token.status === 'waiting' && (
+                                                <button onClick={() => handleStaffUpdateStatus(token.id, 'confirmed')} className="confirm-button">Confirm Arrival</button>
+                                            )}
+                                            {['waiting', 'confirmed', 'in_consultancy'].includes(token.status) && (
+                                                <>
+                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="cancel-button" style={{marginTop:'0.5rem'}}>Cancel Token</button>
+                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="secondary-button" style={{backgroundColor: 'var(--status-skipped)', marginTop:'0.5rem'}}>Mark as Skipped</button>
+                                                </>
+                                            )}
                                     </div>
-                                    {/* --- END MODIFICATION --- */}
                                 </div> 
                             )) 
                         ) : (
@@ -376,10 +371,16 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
         </div> 
     );
 };
-
 const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onViewAnalytics }) => {
     const [queue, setQueue] = useState([]);
     const [error, setError] = useState('');
+
+    // --- NEW: Emergency History Search State ---
+    const [searchPhone, setSearchPhone] = useState('');
+    const [searchHistory, setSearchHistory] = useState(null);
+    const [searchError, setSearchError] = useState('');
+    const [isSearching, setIsSearching] = useState(false);
+    // --- END NEW STATE ---
 
     const fetchQueue = useCallback(async () => {
         setError(''); 
@@ -397,6 +398,28 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
         const interval = setInterval(fetchQueue, 5000); 
         return () => clearInterval(interval);
     }, [fetchQueue]);
+
+    // --- NEW: Emergency Search Handler ---
+    const handleEmergencySearch = async (e) => {
+        e.preventDefault();
+        if (!searchPhone.trim()) return;
+        
+        setIsSearching(true);
+        setSearchError('');
+        setSearchHistory(null);
+
+        try {
+            const response = await apiClient.get(`/history-search/?phone=${searchPhone}`);
+            setSearchHistory(response.data); // Expecting a list of consultation records
+        } catch (err) {
+            console.error("Search error:", err);
+            setSearchError(err.response?.data?.error || 'Patient not found or error occurred.');
+            setSearchHistory([]); 
+        } finally {
+            setIsSearching(false);
+        }
+    };
+    // --- END NEW HANDLER ---
 
     const handleStaffUpdateStatus = async (tokenId, newStatus) => {
          setError('');
@@ -425,7 +448,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
     };
     
     const safeQueue = Array.isArray(queue) ? queue : [];
-    const sortedQueue = [...safeQueue]; // Backend handles sorting
+    const sortedQueue = [...safeQueue]; 
 
     const confirmedPatients = sortedQueue.filter(t => t.status === 'confirmed');
     const waitingPatients = sortedQueue.filter(t => t.status === 'waiting');
@@ -456,10 +479,64 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
             {error && <div className="error-banner">{error}</div>}
             <div className="dashboard-content doctor-dashboard-layout"> 
                 
+                {/* --- NEW: Emergency Search Section --- */}
+                <div className="card emergency-search-card" style={{border: '2px solid var(--error-color)', marginBottom: '20px'}}>
+                    <h2 style={{color: 'var(--error-color)', marginTop: 0}}>🚑 Emergency Patient History Search</h2>
+                    <form onSubmit={handleEmergencySearch} style={{display: 'flex', gap: '10px', marginBottom: '15px'}}>
+                        <input 
+                            type="tel" 
+                            placeholder="Enter Patient Phone (+91...)" 
+                            value={searchPhone}
+                            onChange={(e) => setSearchPhone(e.target.value)}
+                            style={{flex: 1}}
+                            required
+                        />
+                        <button type="submit" className="primary-button" disabled={isSearching}>
+                            {isSearching ? 'Searching...' : 'Search History'}
+                        </button>
+                    </form>
+
+                    {searchError && <p className="error-message">{searchError}</p>}
+
+                    {searchHistory && (
+                        <div className="search-results">
+                            <h3>History Results for {searchPhone}</h3>
+                            {searchHistory.length > 0 ? (
+                                <ul className="history-list" style={{maxHeight: '300px', overflowY: 'auto'}}>
+                                    {searchHistory.map(record => (
+                                        <li key={record.id} className="history-item">
+                                            <p><strong>Date:</strong> {new Date(record.date).toLocaleDateString()}</p>
+                                            <p><strong>Doctor:</strong> {record.doctor ? record.doctor.name : 'Unknown'}</p>
+                                            <p><strong>Notes:</strong> {record.notes || 'No notes'}</p>
+                                            
+                                            {record.prescription_items && record.prescription_items.length > 0 && (
+                                                <div style={{marginTop: '10px', backgroundColor: '#f9f9f9', padding: '5px', borderRadius: '4px'}}>
+                                                    <strong>Prescription:</strong>
+                                                    <ul className="prescription-detail-list">
+                                                        {record.prescription_items.map((item, idx) => (
+                                                            <li key={idx}>
+                                                                {item.medicine_name} - {item.dosage} ({item.duration_days} days)
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </li>
+                                    ))}
+                                </ul>
+                            ) : (
+                                <p>No consultation history found for this patient.</p>
+                            )}
+                            <button onClick={() => {setSearchHistory(null); setSearchPhone('');}} className="secondary-button" style={{marginTop: '10px'}}>Clear Results</button>
+                        </div>
+                    )}
+                </div>
+                {/* --- END NEW SECTION --- */}
+
                  {inConsultancy && (
-                     <div className="card">
-                          <h2 className="queue-section-title" style={{color: 'var(--primary-color)'}}>Currently with Patient</h2>
-                           <div className="queue-grid">
+                      <div className="card">
+                           <h2 className="queue-section-title" style={{color: 'var(--primary-color)'}}>Currently with Patient</h2>
+                            <div className="queue-grid">
                                 <div key={inConsultancy.id} className={`queue-item-card status-in_consultancy`}>
                                      <div className="queue-card-header">
                                          <div className="token-number">#{inConsultancy.token_number || (inConsultancy.appointment_time ? 'Timed' : 'Walk-in')}</div>
@@ -472,7 +549,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                             <p className="appointment-time-display">
                                                 <strong>Original Slot:</strong> {formatTime(inConsultancy.appointment_time)}
                                             </p>
-                                        )}
+                                          )}
                                      </div>
                                      <div className="queue-card-footer">
                                         <button onClick={() => onSelectPatient(inConsultancy.patient)} className="primary-button">Open Consultation Notes</button>
@@ -482,7 +559,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                 </div> 
                            </div>
                            <hr className="queue-divider" />
-                     </div>
+                      </div>
                  )}
 
                 <div className="card">
@@ -502,7 +579,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                             <p className="appointment-time-display">
                                                 <strong>Slot:</strong> {formatTime(token.appointment_time)}
                                             </p>
-                                        )}
+                                         )}
                                     </div>
                                     <div className="queue-card-footer">
                                          {!inConsultancy && (
@@ -538,7 +615,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                             <p className="appointment-time-display">
                                                 <strong>Slot:</strong> {formatTime(token.appointment_time)}
                                             </p>
-                                        )}
+                                         )}
                                     </div>
                                     <div className="queue-card-footer">
                                         <button onClick={() => onSelectPatient(token.patient)} className="secondary-button">View History</button>
@@ -661,7 +738,7 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
                     <h2>Patient History</h2>
                     {/* <-- ADDED: AI Summary component so doctor can summarize a patient's history */}
                     {patient && (
-                       <PatientAISummary patientId={patient.id} token={localStorage.getItem('authToken')} />)}
+                        <PatientAISummary patientId={patient.id} token={localStorage.getItem('authToken')} />)}
 
                     {loading && <p>Loading history...</p>}
                     {error && <p className="error-message">{error}</p>}
@@ -711,11 +788,11 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
                                 </div>
                                 {prescriptionItems.length > 1 && 
                                     <button 
-                                        type="button" 
-                                        onClick={() => handleRemovePrescriptionRow(index)} 
-                                        className="remove-button"
-                                        title="Remove this item"
-                                        disabled={isSaving}>×</button>
+                                            type="button" 
+                                            onClick={() => handleRemovePrescriptionRow(index)} 
+                                            className="remove-button"
+                                            title="Remove this item"
+                                            disabled={isSaving}>×</button>
                                 }
                                 {prescriptionItems.length <= 1 && <div style={{width: '30px'}}></div>} 
                             </div>
@@ -908,7 +985,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
         setMessage(''); 
         setError(''); 
         try { 
-             
+             const response = await apiClient.post('/tokens/patient_cancel/'); 
             setMessage(response.data.message); 
             setCurrentToken(null); 
         } catch (err) { 
@@ -1031,8 +1108,8 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                             <div className="info-card">
                                 {/* --- NEW: Show Date --- */}
                                 <InfoItem icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} 
-                                          label="Appointment Date" 
-                                          value={new Date(currentToken.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} />
+                                    label="Appointment Date" 
+                                    value={new Date(currentToken.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} />
 
                                 {currentToken.appointment_time && <InfoItem icon={<ClockIcon />} label="Appointment Time" value={formatTime(currentToken.appointment_time)} />}
                                 {currentToken.token_number && <InfoItem icon={<TicketIcon />} label="Token #" value={`${currentToken.token_number}`} />}
@@ -1070,6 +1147,10 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                                             {clinics.map(clinic => (<option key={clinic.id} value={clinic.id}>{clinic.name} - {clinic.city}</option>))}
                                         </select>
                                     </div>
+                                    <DoctorSmartSearch 
+                                    clinicId={selectedClinicId} 
+                                    onDoctorFound={setSelectedDoctorId} 
+                                /> 
                                     {selectedClinicId && (
                                         <div className="input-group">
                                             <label>Select Doctor</label>
@@ -1100,7 +1181,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                                                                 type="button" 
                                                                 key={slot} 
                                                                 className={`time-slot-btn ${selectedSlot === slot ? 'selected' : ''}`}
-                                                                onClick={() => setSelectedSlot(slot)}
+                                                                onClick={() => setSelectedSlot(slot)} 
                                                             >
                                                                 {formatTime(slot)}
                                                             </button>

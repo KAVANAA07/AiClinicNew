@@ -23,4 +23,3 @@ def send_sms_notification(to_number, message):
 
 
 ### **Step 1.2: Update `settings.py` for Render**
-

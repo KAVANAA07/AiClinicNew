@@ -34,10 +34,31 @@ class PatientSerializer(serializers.ModelSerializer):
         model = Patient
         fields = ['id', 'name', 'age', 'user', 'phone_number']
 
-class TokenSerializer(serializers.ModelSerializer):
+# --- UPDATED: Prescription & Consultation Serializers ---
+class PrescriptionItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrescriptionItem
+        fields = ['id', 'medicine_name', 'dosage', 'duration_days', 'timing_morning', 'timing_afternoon', 'timing_evening']
+
+class ConsultationSerializer(serializers.ModelSerializer):
+    # Nested doctor serializer to get name, not just ID
+    doctor = DoctorSerializer(read_only=True)
+    prescription_items = PrescriptionItemSerializer(many=True, read_only=True)
+    # Also nesting patient can be useful for verification
     patient = PatientSerializer(read_only=True)
-    doctor = serializers.StringRelatedField(read_only=True)
-    clinic = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Consultation
+        fields = ['id', 'date', 'notes', 'doctor', 'patient', 'prescription_items']
+
+# --- UPDATED: Token Serializer ---
+class TokenSerializer(serializers.ModelSerializer):
+    # Nesting these is critical for the Frontend to show Names instead of IDs
+    patient = PatientSerializer(read_only=True)
+    doctor = DoctorSerializer(read_only=True)
+    clinic = ClinicSerializer(read_only=True)
+    
+    # Keep these ID fields for easier logic access if needed
     doctor_id = serializers.ReadOnlyField(source='doctor.id')
     clinic_id = serializers.ReadOnlyField(source='clinic.id')
     
@@ -45,20 +66,6 @@ class TokenSerializer(serializers.ModelSerializer):
         model = Token
         token_number = serializers.CharField(read_only=True) 
         fields = ['id', 'token_number', 'patient', 'doctor', 'doctor_id', 'created_at', 'status', 'clinic', 'clinic_id', 'appointment_time']
-
-
-class PrescriptionItemSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = PrescriptionItem
-        fields = ['id', 'medicine_name', 'dosage', 'duration_days', 'timing_morning', 'timing_afternoon', 'timing_evening']
-
-class ConsultationSerializer(serializers.ModelSerializer):
-    doctor = DoctorSerializer(read_only=True)
-    prescription_items = PrescriptionItemSerializer(many=True, read_only=True)
-
-    class Meta:
-        model = Consultation
-        fields = ['id', 'date', 'notes', 'doctor', 'prescription_items']
 
 
 # --- Special Purpose Serializers ---
@@ -148,4 +155,3 @@ class AnonymizedTokenSerializer(serializers.ModelSerializer):
     class Meta:
         model = Token
         fields = ['id', 'token_number', 'status', 'appointment_time']
-

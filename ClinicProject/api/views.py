@@ -1,3 +1,4 @@
+from transformers import pipeline  # <--- ADDED FOR AI
 from django.shortcuts import render
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
@@ -214,9 +215,13 @@ class ClinicAnalyticsView(APIView):
     def get(self, request, *args, **kwargs):
         user = request.user
         clinic = None
-        if hasattr(user, 'doctor'): clinic = user.doctor.clinic
-        elif hasattr(user, 'receptionist'): clinic = user.receptionist.clinic
-        if not clinic: return Response({'error': 'User is not associated with a clinic.'}, status=status.HTTP_403_FORBIDDEN)
+        if hasattr(user, 'doctor'): 
+            clinic = user.doctor.clinic
+        elif hasattr(user, 'receptionist'): 
+            clinic = user.receptionist.clinic
+        
+        if not clinic: 
+            return Response({'error': 'User is not associated with a clinic.'}, status=status.HTTP_403_FORBIDDEN)
 
         today = timezone.now().date()
         todays_tokens = Token.objects.filter(clinic=clinic, date=today)
@@ -263,8 +268,11 @@ class ConfirmArrivalView(APIView):
     def post(self, request, *args, **kwargs):
         user = request.user
         user_lat, user_lon = request.data.get('latitude'), request.data.get('longitude')
-        if not all([user_lat, user_lon]): return Response({'error': 'Location data is required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not hasattr(user, 'patient'): return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not all([user_lat, user_lon]): 
+            return Response({'error': 'Location data is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not hasattr(user, 'patient'): 
+            return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             token = Token.objects.get(patient=user.patient, date=timezone.now().date(), status='waiting')
 
@@ -280,9 +288,12 @@ class ConfirmArrivalView(APIView):
                     }, status=status.HTTP_400_BAD_REQUEST)
 
             clinic = token.clinic
-            if not all([clinic.latitude, clinic.longitude]): return Response({'error': 'Clinic location has not been configured by the admin.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            if not all([clinic.latitude, clinic.longitude]): 
+                return Response({'error': 'Clinic location has not been configured by the admin.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
             distance = haversine_distance(float(user_lat), float(user_lon), clinic.latitude, clinic.longitude)
             token.distance_km = round(distance, 2)
+            
             if distance > 1.0: # 1km radius check
                 token.save()
                 return Response({'error': f'You are approximately {distance:.1f} km away. You must be within 1 km to confirm your arrival.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -290,15 +301,18 @@ class ConfirmArrivalView(APIView):
             token.status = 'confirmed'
             token.save()
             return Response({"message": "Arrival confirmed successfully!", "token": TokenSerializer(token).data}, status=status.HTTP_200_OK)
-        except Token.DoesNotExist: return Response({'error': 'No active appointment found for today to confirm.'}, status=status.HTTP_404_NOT_FOUND)
-        except Token.MultipleObjectsReturned: return Response({'error': 'Multiple active appointments found. Please contact reception.'}, status=status.HTTP_400_BAD_REQUEST)
+        except Token.DoesNotExist: 
+            return Response({'error': 'No active appointment found for today to confirm.'}, status=status.HTTP_404_NOT_FOUND)
+        except Token.MultipleObjectsReturned: 
+            return Response({'error': 'Multiple active appointments found. Please contact reception.'}, status=status.HTTP_400_BAD_REQUEST)
 
 # --- CORRECTED PatientCancelTokenView ---
 class PatientCancelTokenView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request, *args, **kwargs):
         user = request.user
-        if not hasattr(user, 'patient'): return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not hasattr(user, 'patient'): 
+            return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
 
         today = timezone.now().date()
         try:
@@ -322,7 +336,8 @@ class GetPatientTokenView(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, *args, **kwargs):
         user = request.user
-        if not hasattr(user, 'patient'): return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not hasattr(user, 'patient'): 
+            return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             today = timezone.now().date()
 
@@ -363,8 +378,11 @@ class PatientCreateTokenView(APIView):
     def post(self, request, *args, **kwargs):
         user = request.user
         doctor_id, appointment_date_str, appointment_time_str = request.data.get('doctor_id'), request.data.get('date'), request.data.get('time')
-        if not all([doctor_id, appointment_date_str, appointment_time_str]): return Response({'error': 'Doctor, date, and time slot are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if not hasattr(user, 'patient'): return Response({'error': 'Only patients can create appointments.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        if not all([doctor_id, appointment_date_str, appointment_time_str]): 
+            return Response({'error': 'Doctor, date, and time slot are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not hasattr(user, 'patient'): 
+            return Response({'error': 'Only patients can create appointments.'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             appointment_date = datetime.strptime(appointment_date_str, '%Y-%m-%d').date()
@@ -372,7 +390,8 @@ class PatientCreateTokenView(APIView):
             if appointment_date < timezone.now().date():
                 return Response({'error': 'Cannot book appointments for past dates.'}, status=status.HTTP_400_BAD_REQUEST)
             doctor = Doctor.objects.get(id=doctor_id)
-        except (ValueError, Doctor.DoesNotExist): return Response({'error': 'Invalid data provided.'}, status=status.HTTP_400_BAD_REQUEST)
+        except (ValueError, Doctor.DoesNotExist): 
+            return Response({'error': 'Invalid data provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
         if Token.objects.filter(patient=user.patient).exclude(status__in=['completed', 'cancelled', 'skipped']).exists():
             return Response({'error': 'You already have an active appointment. Cannot book another one now.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -588,6 +607,37 @@ class PatientHistoryView(generics.ListAPIView):
         patient_id = self.kwargs.get('patient_id')
         if patient_id: return Consultation.objects.filter(patient__id=patient_id).order_by('-date')
         return Consultation.objects.none()
+
+# ====================================================================
+# --- NEW FEATURE: Patient History Search (Emergency/Doctor) ---
+# ====================================================================
+class PatientHistorySearchView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        # Restrict to Doctors/Staff only
+        if not (hasattr(request.user, 'doctor') or hasattr(request.user, 'receptionist') or request.user.is_staff):
+            return Response({'error': 'Permission denied. Staff access required.'}, status=status.HTTP_403_FORBIDDEN)
+
+        phone_number = request.query_params.get('phone')
+        if not phone_number:
+            return Response({'error': 'Phone number parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # Find the patient by phone number
+            patient = Patient.objects.get(phone_number=phone_number)
+            
+            # --- CHANGED HERE: Fetch Consultations instead of Tokens ---
+            consultations = Consultation.objects.filter(patient=patient).order_by('-date')
+            
+            # --- CHANGED HERE: Use ConsultationSerializer ---
+            serializer = ConsultationSerializer(consultations, many=True)
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Patient.DoesNotExist:
+            return Response({'error': 'Patient not found with this phone number.'}, status=status.HTTP_404_NOT_FOUND)
+
 
 class PatientLiveQueueView(generics.ListAPIView):
     serializer_class = AnonymizedTokenSerializer
@@ -912,3 +962,80 @@ def handle_incoming_sms(request):
         except Exception as e: print(f"Error processing SMS cancellation for {from_number}: {e}"); message = "An error occurred trying to cancel. Contact clinic."; response.message(message)
     else: print(f"Received non-cancellation SMS from {from_number}: '{body}' - No action taken."); pass
     return HttpResponse(str(response), content_type='text/xml')
+
+# ====================================================================
+# --- AI PATIENT HISTORY SUMMARIZER (LAZY LOADING) ---
+# ====================================================================
+
+# Initialize global variable as None.
+# We will load the AI model ONLY when the first request comes in.
+ai_summarizer = None 
+
+class PatientHistorySummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, patient_id):
+        # Tell Python we want to write to the global variable
+        global ai_summarizer 
+        
+        try:
+            print(f"Requesting summary for Patient ID: {patient_id}")
+            
+            # 1. LAZY LOADING CHECK
+            # Only if the variable is None, we load the model.
+            if ai_summarizer is None:
+                print("⚡ FIRST RUN: Loading AI Model into memory... This takes 20-30s...")
+                # This line downloads/loads the model
+                ai_summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+                print("✅ Model Loaded Successfully! Future requests will be instant.")
+
+            # 2. Fetch COMPLETED consultations
+            consultations = Consultation.objects.filter(
+                patient__id=patient_id
+            ).order_by('date')
+
+            if not consultations.exists():
+                 return Response({"summary": "No previous consultation history found."})
+
+            # 3. Combine notes
+            full_text = ""
+            for consult in consultations:
+                if consult.notes:
+                    full_text += f"Date: {consult.date}. Notes: {consult.notes}. "
+
+            # 4. Safety Check (Too short?)
+            if len(full_text.split()) < 30:
+                return Response({"summary": "History is too short for AI. Recent notes: " + full_text})
+
+            # 5. Generate Summary (Using the now-loaded model)
+            summary_result = ai_summarizer(full_text, max_length=150, min_length=30, do_sample=False)
+            return Response({"summary": summary_result[0]['summary_text']})
+
+        except Exception as e:
+            print(f"AI ERROR: {str(e)}")
+            return Response({"error": str(e)}, status=500)
+# --- ADD THIS TO THE BOTTOM OF api/views.py ---
+from .ai_logic import find_best_doctor 
+
+class RecommendDoctorView(APIView):
+    def post(self, request):
+        symptoms = request.data.get('symptoms', '')
+        clinic_id = request.data.get('clinic_id')
+        
+        if not symptoms or not clinic_id:
+            return Response({"error": "Missing data"}, status=400)
+
+        recommended_doc = find_best_doctor(symptoms, clinic_id)
+        
+        if recommended_doc:
+            return Response({
+                "id": recommended_doc.id,
+                "name": f"Dr. {recommended_doc.user.get_full_name()}",
+                "specialization": recommended_doc.specialization,
+                "found": True
+            })
+        else:
+            return Response({
+                "message": "No specific match found.",
+                "found": False
+            })
