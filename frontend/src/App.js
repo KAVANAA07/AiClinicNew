@@ -6,7 +6,8 @@ import LoginPage from './LoginPage';
 import './LoginPage.css';
 // --- LOGO IMPORT ---
 import PatientAISummary from './components/PatientAISummary';
-import DoctorSmartSearch from './DoctorSmartSearch';
+import ScheduleManagement from './components/ScheduleManagement';
+
 import medqLogo from './logo.jpg'; // Assuming logo.png is in the src folder
 
 // --- API Configuration ---
@@ -20,10 +21,29 @@ apiClient.interceptors.request.use(config => {
     if (token) {
         config.headers.Authorization = `Token ${token}`;
     }
+    console.log('API Request:', config.method?.toUpperCase(), config.url, 'Auth:', !!token);
     return config;
 }, error => {
+    console.error('Request interceptor error:', error);
     return Promise.reject(error);
 });
+
+apiClient.interceptors.response.use(
+    response => {
+        console.log('API Response:', response.config.method?.toUpperCase(), response.config.url, 'Status:', response.status);
+        return response;
+    },
+    error => {
+        console.error('API Error:', error.config?.method?.toUpperCase(), error.config?.url, 'Status:', error.response?.status, 'Data:', error.response?.data);
+        if (error.response?.status === 401) {
+            console.warn('Unauthorized request - token may be invalid');
+            // Optionally clear invalid token
+            // localStorage.removeItem('authToken');
+            // localStorage.removeItem('loggedInUser');
+        }
+        return Promise.reject(error);
+    }
+);
 
 
 // ====================================================================
@@ -81,9 +101,16 @@ const PatientRegisterComponent = ({ onRegisterSuccess, onSwitchToLogin, showSucc
             return; 
         }
         
-        // Basic phone validation (can be enhanced)
-        if (!phoneNumber.startsWith('+')) {
-             setError("Phone number must start with '+' (e.g., +919876543210).");
+        if (password.length < 8) {
+            setError("Password must be at least 8 characters long.");
+            setIsLoading(false);
+            return;
+        }
+        
+        // Enhanced phone validation
+        const phoneRegex = /^\+[1-9]\d{1,14}$/;
+        if (!phoneRegex.test(phoneNumber)) {
+             setError("Please enter a valid phone number with country code (e.g., +919876543210).");
              setIsLoading(false);
              return;
         }
@@ -142,7 +169,7 @@ const PatientRegisterComponent = ({ onRegisterSuccess, onSwitchToLogin, showSucc
 // PRIVATE DASHBOARD COMPONENTS (FULL CODE RESTORED)
 // ====================================================================
 
-const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onViewAnalytics }) => {
+const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onViewHistory, onViewAnalytics, onManageSchedules }) => {
     const [patientName, setPatientName] = useState('');
     const [patientAge, setPatientAge] = useState('');
     const [patientPhone, setPatientPhone] = useState('');
@@ -156,11 +183,15 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
 
     const formatTime = (timeStr) => {
         if (!timeStr) return '';
-        const [hour, minute] = timeStr.split(':');
+        const parts = timeStr.split(':');
+        if (parts.length < 2) return 'Invalid time';
+        const [hour, minute] = parts;
         const h = parseInt(hour, 10);
+        const m = parseInt(minute, 10);
+        if (isNaN(h) || isNaN(m)) return 'Invalid time';
         const ampm = h >= 12 ? 'PM' : 'AM';
         const formattedHour = h % 12 === 0 ? 12 : h % 12;
-        const formattedMinute = String(minute).padStart(2, '0'); 
+        const formattedMinute = String(m).padStart(2, '0'); 
         return `${formattedHour}:${formattedMinute} ${ampm}`;
     };
 
@@ -268,9 +299,14 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
     const currentTimeForFilter = new Date();
     const futureSlots = availableSlots.filter(slot => {
         if (today === new Date().toISOString().split('T')[0]) {
-            const [hour, minute] = slot.split(':');
+            const parts = slot.split(':');
+            if (parts.length < 2) return false;
+            const [hour, minute] = parts;
+            const h = parseInt(hour, 10);
+            const m = parseInt(minute, 10);
+            if (isNaN(h) || isNaN(m)) return false;
             const slotTime = new Date();
-            slotTime.setHours(parseInt(hour, 10), parseInt(minute, 10), 0, 0);
+            slotTime.setHours(h, m, 0, 0);
             return slotTime >= currentTimeForFilter; 
         }
         return true; 
@@ -282,6 +318,7 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
                 <h1>Receptionist Dashboard</h1>
                 <div className="user-info">
                     <span>{getWelcomeMessage()}</span>
+                    <button onClick={onManageSchedules} className="secondary-button">Manage Schedules</button>
                     <button onClick={onViewAnalytics} className="secondary-button">View Analytics</button>
                     <button onClick={onLogout} className="logout-button">Logout</button>
                 </div>
@@ -323,45 +360,55 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
                 </div>
                 <div className="queue-card card"> 
                     <h2>Live Patient Queue</h2>
-                    <div className="queue-grid">
+                    <div className="table-container">
                         {sortedQueue.length > 0 ? ( 
-                            sortedQueue.map((token) => ( 
-                                <div key={token.id} className={`queue-item-card status-${token.status}`}>
-                                    <div className="queue-card-header">
-                                        <div className="token-number">#{token.token_number || (token.appointment_time ? 'Timed' : 'Walk-in')}</div>
-                                        <span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span>
-                                    </div>
-                                    <div className="queue-card-body">
-                                            <p className="patient-name">{token.patient.name}</p>
-                                            <p><strong>Age:</strong> {token.patient.age}</p>
-                                            <p><strong>Doctor:</strong> {token.doctor.name}</p> 
-                                            
-                                            {token.appointment_time && (
-                                                <p className="appointment-time-display">
-                                                    <strong>Time:</strong> {formatTime(token.appointment_time)}
-                                                </p>
-                                            )}
-
-                                            {token.distance_km != null && ['waiting', 'confirmed'].includes(token.status) && (
-                                                <p className="patient-distance">
-                                                    <LocationIcon />
-                                                    {token.distance_km <= 0.1 ? 'At Clinic' : `${token.distance_km.toFixed(1)} km away`} 
-                                                </p>
-                                            )}
-                                    </div>
-                                    <div className="queue-card-footer">
-                                            {token.status === 'waiting' && (
-                                                <button onClick={() => handleStaffUpdateStatus(token.id, 'confirmed')} className="confirm-button">Confirm Arrival</button>
-                                            )}
-                                            {['waiting', 'confirmed', 'in_consultancy'].includes(token.status) && (
-                                                <>
-                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="cancel-button" style={{marginTop:'0.5rem'}}>Cancel Token</button>
-                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="secondary-button" style={{backgroundColor: 'var(--status-skipped)', marginTop:'0.5rem'}}>Mark as Skipped</button>
-                                                </>
-                                            )}
-                                    </div>
-                                </div> 
-                            )) 
+                            <table className="patient-table">
+                                <thead>
+                                    <tr>
+                                        <th>Token</th>
+                                        <th>Patient</th>
+                                        <th>Age</th>
+                                        <th>Doctor</th>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                        <th>Distance</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {sortedQueue.map((token) => ( 
+                                        <tr key={token.id} className={`status-${token.status}`}>
+                                            <td className="token-cell">#{token.token_number || (token.appointment_time ? 'Scheduled' : 'Walk-in')}</td>
+                                            <td className="patient-cell">{token.patient.name}</td>
+                                            <td>{token.patient.age}</td>
+                                            <td>{token.doctor.name}</td>
+                                            <td>{token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}</td>
+                                            <td><span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span></td>
+                                            <td>
+                                                {token.distance_km != null && ['waiting', 'confirmed'].includes(token.status) ? (
+                                                    <span className="distance-info">
+                                                        <LocationIcon />
+                                                        {token.distance_km <= 0.1 ? 'At Clinic' : `${token.distance_km.toFixed(1)} km`}
+                                                    </span>
+                                                ) : '-'}
+                                            </td>
+                                            <td>
+                                                <div className="action-buttons">
+                                                    {token.status === 'waiting' && (
+                                                        <button onClick={() => handleStaffUpdateStatus(token.id, 'confirmed')} className="table-btn confirm-btn">Confirm</button>
+                                                    )}
+                                                    {['waiting', 'confirmed', 'in_consultancy'].includes(token.status) && (
+                                                        <>
+                                                            <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="table-btn cancel-btn">Cancel</button>
+                                                            <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="table-btn skip-btn">Skip</button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         ) : (
                             <p>The queue is currently empty.</p>
                         )}
@@ -371,25 +418,38 @@ const ReceptionistDashboardComponent = ({ loggedInUser, onLogout, onSelectPatien
         </div> 
     );
 };
-const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onViewAnalytics }) => {
+const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onViewHistory, onViewAnalytics }) => {
     const [queue, setQueue] = useState([]);
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(true);
 
     // --- NEW: Emergency History Search State ---
     const [searchPhone, setSearchPhone] = useState('');
     const [searchHistory, setSearchHistory] = useState(null);
     const [searchError, setSearchError] = useState('');
     const [isSearching, setIsSearching] = useState(false);
+    const [aiSummary, setAiSummary] = useState('');
+    const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
     // --- END NEW STATE ---
 
     const fetchQueue = useCallback(async () => {
         setError(''); 
+        setLoading(true);
         try { 
+            console.log('Fetching doctor queue...');
             const response = await apiClient.get('/tokens/'); 
-            setQueue(response.data); 
+            console.log('Doctor queue response:', response.data);
+            console.log('Response type:', typeof response.data, 'Is array:', Array.isArray(response.data));
+            setQueue(Array.isArray(response.data) ? response.data : []); 
         } catch (err) { 
             setError('Could not fetch your patient queue.'); 
-            console.error("Fetch queue error:", err.response || err);
+            console.error("Fetch queue error:", err);
+            console.error("Error response:", err.response);
+            console.error("Error status:", err.response?.status);
+            console.error("Error data:", err.response?.data);
+            setQueue([]);
+        } finally {
+            setLoading(false);
         }
     }, []);
 
@@ -398,6 +458,15 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
         const interval = setInterval(fetchQueue, 5000); 
         return () => clearInterval(interval);
     }, [fetchQueue]);
+
+    // Debug logging
+    useEffect(() => {
+        console.log('Doctor dashboard queue state:', queue);
+        console.log('Queue length:', queue.length);
+        console.log('Loading state:', loading);
+        console.log('User info:', loggedInUser);
+        console.log('User role:', loggedInUser?.user?.role);
+    }, [queue, loading, loggedInUser]);
 
     // --- NEW: Emergency Search Handler ---
     const handleEmergencySearch = async (e) => {
@@ -409,7 +478,7 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
         setSearchHistory(null);
 
         try {
-            const response = await apiClient.get(`/history-search/?phone=${searchPhone}`);
+            const response = await apiClient.get(`/history-search/?phone=${encodeURIComponent(searchPhone.trim())}`);
             setSearchHistory(response.data); // Expecting a list of consultation records
         } catch (err) {
             console.error("Search error:", err);
@@ -450,19 +519,23 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
     const safeQueue = Array.isArray(queue) ? queue : [];
     const sortedQueue = [...safeQueue]; 
 
-    const confirmedPatients = sortedQueue.filter(t => t.status === 'confirmed');
-    const waitingPatients = sortedQueue.filter(t => t.status === 'waiting');
-    const inConsultancy = sortedQueue.find(t => t.status === 'in_consultancy'); 
+    const confirmedPatients = sortedQueue.filter(t => t && t.status === 'confirmed');
+    const waitingPatients = sortedQueue.filter(t => t && t.status === 'waiting');
+    const inConsultancy = sortedQueue.find(t => t && t.status === 'in_consultancy'); 
 
-    const nextPatientTokenId = confirmedPatients.length > 0 ? confirmedPatients[0].id : null;
+    const nextPatientTokenId = confirmedPatients.length > 0 ? confirmedPatients[0]?.id : null;
 
     const formatTime = (timeStr) => { 
          if (!timeStr) return '';
-         const [hour, minute] = timeStr.split(':');
+         const parts = timeStr.split(':');
+         if (parts.length < 2) return 'Invalid time';
+         const [hour, minute] = parts;
          const h = parseInt(hour, 10);
+         const m = parseInt(minute, 10);
+         if (isNaN(h) || isNaN(m)) return 'Invalid time';
          const ampm = h >= 12 ? 'PM' : 'AM';
          const formattedHour = h % 12 === 0 ? 12 : h % 12;
-         const formattedMinute = String(minute).padStart(2, '0');
+         const formattedMinute = String(m).padStart(2, '0');
          return `${formattedHour}:${formattedMinute} ${ampm}`;
     };
 
@@ -477,57 +550,137 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                 </div>
             </header>
             {error && <div className="error-banner">{error}</div>}
+            {loading && <div className="loading-message">Loading patient queue...</div>}
             <div className="dashboard-content doctor-dashboard-layout"> 
                 
-                {/* --- NEW: Emergency Search Section --- */}
-                <div className="card emergency-search-card" style={{border: '2px solid var(--error-color)', marginBottom: '20px'}}>
-                    <h2 style={{color: 'var(--error-color)', marginTop: 0}}>🚑 Emergency Patient History Search</h2>
-                    <form onSubmit={handleEmergencySearch} style={{display: 'flex', gap: '10px', marginBottom: '15px'}}>
-                        <input 
-                            type="tel" 
-                            placeholder="Enter Patient Phone (+91...)" 
-                            value={searchPhone}
-                            onChange={(e) => setSearchPhone(e.target.value)}
-                            style={{flex: 1}}
-                            required
-                        />
-                        <button type="submit" className="primary-button" disabled={isSearching}>
-                            {isSearching ? 'Searching...' : 'Search History'}
+                {/* --- Enhanced Emergency Search Section --- */}
+                <div className="card emergency-search-card" style={{border: '2px solid var(--primary-color)', marginBottom: '20px', background: 'linear-gradient(135deg, #f8f9fa, #e9ecef)'}}>
+                    <h2 style={{color: 'var(--primary-color)', marginTop: 0, display: 'flex', alignItems: 'center', gap: '10px'}}>
+                        🔍 Patient History Search
+                        <span style={{fontSize: '0.7em', background: 'var(--highlight-color)', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>ENHANCED</span>
+                    </h2>
+                    <form onSubmit={handleEmergencySearch} style={{display: 'flex', gap: '10px', marginBottom: '15px', padding: '15px', background: 'white', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)'}}>
+                        <div className="input-group" style={{flex: 1, margin: 0}}>
+                            <input 
+                                type="tel" 
+                                placeholder="Enter Patient Phone (+91...)" 
+                                value={searchPhone}
+                                onChange={(e) => setSearchPhone(e.target.value)}
+                                required
+                            />
+                        </div>
+                        <button type="submit" className="primary-button" disabled={isSearching} style={{padding: '12px 24px', minWidth: '140px'}}>
+                            {isSearching ? '🔄 Searching...' : '🔍 Search History'}
                         </button>
                     </form>
 
                     {searchError && <p className="error-message">{searchError}</p>}
 
                     {searchHistory && (
-                        <div className="search-results">
-                            <h3>History Results for {searchPhone}</h3>
+                        <div className="search-results" style={{background: 'white', borderRadius: '8px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)'}}>
+                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
+                                <h3 style={{margin: 0, color: 'var(--primary-color)'}}>📋 History Results for {searchPhone}</h3>
+                                <span style={{background: 'var(--success-color)', color: 'white', padding: '4px 12px', borderRadius: '20px', fontSize: '0.8em'}}>
+                                    {searchHistory.length} Records Found
+                                </span>
+                            </div>
                             {searchHistory.length > 0 ? (
-                                <ul className="history-list" style={{maxHeight: '300px', overflowY: 'auto'}}>
-                                    {searchHistory.map(record => (
-                                        <li key={record.id} className="history-item">
-                                            <p><strong>Date:</strong> {new Date(record.date).toLocaleDateString()}</p>
-                                            <p><strong>Doctor:</strong> {record.doctor ? record.doctor.name : 'Unknown'}</p>
-                                            <p><strong>Notes:</strong> {record.notes || 'No notes'}</p>
+                                <div style={{maxHeight: '400px', overflowY: 'auto', border: '1px solid var(--medium-gray)', borderRadius: '6px'}}>
+                                    {searchHistory.map((record, index) => (
+                                        <div key={record.id} style={{padding: '15px', borderBottom: index < searchHistory.length - 1 ? '1px solid var(--light-gray)' : 'none', background: index % 2 === 0 ? '#fafafa' : 'white'}}>
+                                            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px'}}>
+                                                <span style={{fontWeight: 'bold', color: 'var(--primary-color)'}}>
+                                                    📅 {new Date(record.date).toLocaleDateString()}
+                                                </span>
+                                                <span style={{background: 'var(--info-color)', color: 'white', padding: '2px 8px', borderRadius: '12px', fontSize: '0.8em'}}>
+                                                    👨‍⚕️ {record.doctor ? record.doctor.name : 'Unknown'}
+                                                </span>
+                                            </div>
+                                            <p style={{margin: '8px 0', color: 'var(--text-color)'}}><strong>Notes:</strong> {record.notes || 'No notes'}</p>
                                             
                                             {record.prescription_items && record.prescription_items.length > 0 && (
-                                                <div style={{marginTop: '10px', backgroundColor: '#f9f9f9', padding: '5px', borderRadius: '4px'}}>
-                                                    <strong>Prescription:</strong>
-                                                    <ul className="prescription-detail-list">
+                                                <div style={{marginTop: '12px', backgroundColor: '#e8f5e8', padding: '10px', borderRadius: '6px', border: '1px solid #c3e6c3'}}>
+                                                    <strong style={{color: 'var(--success-color)', display: 'flex', alignItems: 'center', gap: '5px'}}>
+                                                        💊 Prescription ({record.prescription_items.length} items):
+                                                    </strong>
+                                                    <div style={{marginTop: '8px'}}>
                                                         {record.prescription_items.map((item, idx) => (
-                                                            <li key={idx}>
-                                                                {item.medicine_name} - {item.dosage} ({item.duration_days} days)
-                                                            </li>
+                                                            <div key={idx} style={{padding: '6px 0', borderBottom: idx < record.prescription_items.length - 1 ? '1px solid #d4edda' : 'none'}}>
+                                                                <span style={{fontWeight: '600'}}>{item.medicine_name}</span> - {item.dosage} ({item.duration_days} days)
+                                                            </div>
                                                         ))}
-                                                    </ul>
+                                                    </div>
                                                 </div>
                                             )}
-                                        </li>
+                                        </div>
                                     ))}
-                                </ul>
+                                </div>
                             ) : (
-                                <p>No consultation history found for this patient.</p>
+                                <div style={{textAlign: 'center', padding: '40px', color: 'var(--dark-gray)'}}>
+                                    <div style={{fontSize: '3em', marginBottom: '10px'}}>📭</div>
+                                    <p>No consultation history found for this patient.</p>
+                                </div>
                             )}
-                            <button onClick={() => {setSearchHistory(null); setSearchPhone('');}} className="secondary-button" style={{marginTop: '10px'}}>Clear Results</button>
+                            <div style={{display: 'flex', gap: '12px', marginTop: '20px', padding: '15px', background: '#f8f9fa', borderRadius: '6px'}}>
+                                <button 
+                                    onClick={() => {setSearchHistory(null); setSearchPhone('');}} 
+                                    className="secondary-button" 
+                                    style={{flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}
+                                >
+                                    🗑️ Clear Results
+                                </button>
+                                <button 
+                                    onClick={async () => {
+                                        if (!searchHistory || searchHistory.length === 0) return;
+                                        
+                                        setIsGeneratingSummary(true);
+                                        try {
+                                            const historyText = searchHistory.map(record => 
+                                                `Date: ${new Date(record.date).toLocaleDateString()}\n` +
+                                                `Doctor: ${record.doctor?.name || 'Unknown'}\n` +
+                                                `Notes: ${record.notes || 'No notes'}\n` +
+                                                `Prescriptions: ${record.prescription_items?.map(item => 
+                                                    `${item.medicine_name} - ${item.dosage} (${item.duration_days} days)`
+                                                ).join(', ') || 'None'}\n\n`
+                                            ).join('');
+                                            
+                                            const response = await apiClient.post('/ai-summary/', {
+                                                patient_history: historyText,
+                                                phone: searchPhone
+                                            });
+                                            
+                                            setAiSummary(response.data.summary);
+                                        } catch (err) {
+                                            console.error('AI Summary error:', err);
+                                            setAiSummary('Error generating AI summary. Please try again.');
+                                        } finally {
+                                            setIsGeneratingSummary(false);
+                                        }
+                                    }}
+                                    className="primary-button"
+                                    disabled={!searchHistory || searchHistory.length === 0 || isGeneratingSummary}
+                                    style={{flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'linear-gradient(135deg, var(--highlight-color), #ff6b35)'}}
+                                >
+                                    {isGeneratingSummary ? '🔄 Generating...' : '🤖 AI Summary'}
+                                </button>
+                            </div>
+                            
+                            {aiSummary && (
+                                <div style={{marginTop: '20px', padding: '20px', background: 'linear-gradient(135deg, #e3f2fd, #f3e5f5)', borderRadius: '8px', border: '2px solid var(--info-color)'}}>
+                                    <h4 style={{margin: '0 0 15px 0', color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                        🤖 AI Medical Summary
+                                    </h4>
+                                    <div style={{background: 'white', padding: '15px', borderRadius: '6px', border: '1px solid #e0e0e0', whiteSpace: 'pre-wrap', lineHeight: '1.6'}}>
+                                        {aiSummary}
+                                    </div>
+                                    <button 
+                                        onClick={() => setAiSummary('')} 
+                                        style={{marginTop: '10px', padding: '8px 16px', background: 'var(--medium-gray)', border: 'none', borderRadius: '4px', cursor: 'pointer'}}
+                                    >
+                                        ✖ Close Summary
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -539,12 +692,12 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                             <div className="queue-grid">
                                 <div key={inConsultancy.id} className={`queue-item-card status-in_consultancy`}>
                                      <div className="queue-card-header">
-                                         <div className="token-number">#{inConsultancy.token_number || (inConsultancy.appointment_time ? 'Timed' : 'Walk-in')}</div>
+                                         <div className="token-number">#{inConsultancy.token_number || (inConsultancy.appointment_time ? 'Scheduled' : 'Walk-in')}</div>
                                          <span className={`status-badge status-in_consultancy`}>In Consultancy</span>
                                      </div>
                                      <div className="queue-card-body">
-                                         <p className="patient-name">{inConsultancy.patient.name}</p>
-                                         <p><strong>Age:</strong> {inConsultancy.patient.age}</p>
+                                         <p className="patient-name">{inConsultancy.patient?.name || 'Unknown Patient'}</p>
+                                         <p><strong>Age:</strong> {inConsultancy.patient?.age || 'N/A'}</p>
                                           {inConsultancy.appointment_time && (
                                             <p className="appointment-time-display">
                                                 <strong>Original Slot:</strong> {formatTime(inConsultancy.appointment_time)}
@@ -564,67 +717,109 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
 
                 <div className="card">
                     <h2 className="queue-section-title">Ready for Consultation ({confirmedPatients.length})</h2>
-                    <div className="queue-grid">
-                        {confirmedPatients.length > 0 ? ( 
-                            confirmedPatients.map((token) => ( 
-                                <div key={token.id} className={`queue-item-card status-confirmed ${token.id === nextPatientTokenId && !inConsultancy ? 'next-patient-highlight' : ''}`}> 
-                                    <div className="queue-card-header">
-                                        <div className="token-number">#{token.token_number || (token.appointment_time ? 'Timed' : 'Walk-in')}</div>
-                                        <span className={`status-badge status-confirmed`}>Confirmed</span>
-                                    </div>
-                                    <div className="queue-card-body">
-                                        <p className="patient-name">{token.patient.name}</p>
-                                        <p><strong>Age:</strong> {token.patient.age}</p>
-                                         {token.appointment_time && (
-                                            <p className="appointment-time-display">
-                                                <strong>Slot:</strong> {formatTime(token.appointment_time)}
-                                            </p>
-                                         )}
-                                    </div>
-                                    <div className="queue-card-footer">
-                                         {!inConsultancy && (
-                                             <button onClick={() => handleStartConsultation(token)} className="primary-button">Start Consultation</button>
-                                         )}
-                                         {inConsultancy && (
-                                              <p style={{fontSize: '0.9em', color:'var(--dark-gray)', textAlign:'center'}}>Finish current consultation first.</p>
-                                         )}
-                                        <button onClick={() => onSelectPatient(token.patient)} className="secondary-button" style={{marginTop:'0.5rem'}}>View History</button>
-                                        <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="secondary-button" style={{backgroundColor: 'var(--status-skipped)', marginTop:'0.5rem'}}>Mark as Skipped</button>
-                                    </div>
-                                </div> 
-                            )) 
-                        ) : (
-                            <p>No patients are currently confirmed and waiting.</p>
-                        )}
-                    </div>
+                    {!loading && (
+                        <div className="table-container">
+                            {confirmedPatients.length > 0 ? (
+                                <table className="patient-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Token</th>
+                                            <th>Patient</th>
+                                            <th>Age</th>
+                                            <th>Time</th>
+                                            <th>Status</th>
+                                            <th>Start</th>
+                                            <th>History</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {confirmedPatients.map((token) => (
+                                            <tr key={token.id} className={`${token.id === nextPatientTokenId && !inConsultancy ? 'next-patient-row' : ''}`}>
+                                                <td className="token-cell">#{token.token_number || (token.appointment_time ? 'Scheduled' : 'Walk-in')}</td>
+                                                <td className="patient-cell">{token.patient?.name || 'Unknown'}</td>
+                                                <td>{token.patient?.age || 'N/A'}</td>
+                                                <td>{token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}</td>
+                                                <td><span className="status-badge status-confirmed">Confirmed</span></td>
+                                                <td>
+                                                    {!inConsultancy ? (
+                                                        <button onClick={() => handleStartConsultation(token)} className="table-btn start-btn">Start</button>
+                                                    ) : (
+                                                        <span className="disabled-text">Wait</span>
+                                                    )}
+                                                </td>
+                                                <td>
+                                                    <button onClick={() => onViewHistory(token.patient)} className="table-btn history-btn">History</button>
+                                                </td>
+                                                <td>
+                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="table-btn skip-btn">Skip</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <p>No patients are currently confirmed and waiting.</p>
+                            )}
+                        </div>
+                    )}
                     
                     <hr className="queue-divider" />
                     <h2 className="queue-section-title">Waiting for Arrival ({waitingPatients.length})</h2>
-                    <div className="queue-grid">
-                        {waitingPatients.length > 0 ? ( 
-                            waitingPatients.map((token) => ( 
-                                <div key={token.id} className={`queue-item-card status-waiting`}>
-                                    <div className="queue-card-header">
-                                         <div className="token-number">#{token.token_number || (token.appointment_time ? 'Timed' : 'Walk-in')}</div>
-                                        <span className={`status-badge status-waiting`}>Waiting</span>
-                                    </div>
-                                    <div className="queue-card-body">
-                                        <p className="patient-name">{token.patient.name}</p>
-                                        <p><strong>Age:</strong> {token.patient.age}</p>
-                                         {token.appointment_time && (
-                                            <p className="appointment-time-display">
-                                                <strong>Slot:</strong> {formatTime(token.appointment_time)}
-                                            </p>
-                                         )}
-                                    </div>
-                                    <div className="queue-card-footer">
-                                        <button onClick={() => onSelectPatient(token.patient)} className="secondary-button">View History</button>
-                                    </div>
-                                </div> 
-                            )) 
-                        ) : (
-                            <p>No patients are currently waiting for arrival confirmation.</p>
-                        )}
+                    {!loading && (
+                        <div className="table-container">
+                            {waitingPatients.length > 0 ? (
+                                <table className="patient-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Token</th>
+                                            <th>Patient</th>
+                                            <th>Age</th>
+                                            <th>Time</th>
+                                            <th>Status</th>
+                                            <th>Start</th>
+                                            <th>History</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {waitingPatients.map((token) => (
+                                            <tr key={token.id}>
+                                                <td className="token-cell">#{token.token_number || (token.appointment_time ? 'Scheduled' : 'Walk-in')}</td>
+                                                <td className="patient-cell">{token.patient?.name || 'Unknown'}</td>
+                                                <td>{token.patient?.age || 'N/A'}</td>
+                                                <td>{token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}</td>
+                                                <td><span className="status-badge status-waiting">Waiting</span></td>
+                                                <td><span className="disabled-text">Not Arrived</span></td>
+                                                <td>
+                                                    <button onClick={() => onViewHistory(token.patient)} className="table-btn history-btn">History</button>
+                                                </td>
+                                                <td>
+                                                    <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="table-btn cancel-btn">Cancel</button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <p>No patients are currently waiting for arrival confirmation.</p>
+                            )}
+                        </div>
+                    )}
+                    
+                    {/* Debug info for development */}
+                    <div style={{marginTop: '20px', padding: '10px', backgroundColor: '#f0f0f0', fontSize: '12px'}}>
+                        <strong>Debug Info:</strong><br/>
+                        Total queue items: {safeQueue.length}<br/>
+                        Confirmed: {confirmedPatients.length}<br/>
+                        Waiting: {waitingPatients.length}<br/>
+                        In consultancy: {inConsultancy ? 1 : 0}<br/>
+                        Loading: {loading ? 'Yes' : 'No'}<br/>
+                        Error: {error || 'None'}<br/>
+                        Auth token: {localStorage.getItem('authToken') ? 'Present' : 'Missing'}<br/>
+                        User role: {loggedInUser?.user?.role || 'Unknown'}<br/>
+                        User name: {loggedInUser?.user?.name || 'Unknown'}
+                        <br/><button onClick={fetchQueue} style={{marginTop: '10px', padding: '5px 10px'}}>Refresh Queue</button>
                     </div>
                 </div>
             </div>
@@ -811,6 +1006,66 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
     );
 };
 
+const PatientHistoryComponent = ({ patient, onBack }) => {
+    const [history, setHistory] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+
+    const fetchHistory = useCallback(async () => {
+        if (!patient) return;
+        setLoading(true); setError('');
+        try {
+            const response = await apiClient.get(`/history/${patient.id}/`);
+            setHistory(response.data);
+        } catch (err) {
+            setError('Could not fetch patient history.');
+            console.error("Fetch history error:", err.response || err);
+        } finally { setLoading(false); }
+    }, [patient]);
+
+    useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+    return (
+        <div className="dashboard-container">
+            <header className="dashboard-header">
+                <h1>Patient History: {patient?.name || 'Loading...'} (Age: {patient?.age || 'N/A'})</h1>
+                <button onClick={onBack} className="logout-button">Back to Dashboard</button>
+            </header>
+            <div className="dashboard-content">
+                <div className="card">
+                    <h2>Consultation History</h2>
+                    {loading && <p>Loading history...</p>}
+                    {error && <p className="error-message">{error}</p>}
+                    {!loading && !error && (history.length > 0 ? (
+                        <ul className="history-list">{history.map(c => (
+                            <li key={c.id} className="history-item">
+                                <p><strong>Date:</strong> {new Date(c.date).toLocaleDateString()}</p>
+                                <p><strong>Doctor:</strong> {c.doctor.name}</p>
+                                <p><strong>Notes:</strong> {c.notes}</p>
+                                {c.prescription_items && c.prescription_items.length > 0 && (
+                                    <>
+                                        <p><strong>Prescription:</strong></p>
+                                        <ul className="prescription-detail-list">
+                                            {c.prescription_items.map(item => (
+                                                <li key={item.id}>
+                                                     {item.medicine_name} - {item.dosage} ({item.duration_days} days)
+                                                     <small style={{marginLeft: '10px', color: 'var(--dark-gray)'}}>
+                                                          ({item.timing_morning ? 'M' : ''}{item.timing_afternoon ? 'A' : ''}{item.timing_evening ? 'E' : ''})
+                                                     </small>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </>
+                                )}
+                            </li>
+                        ))}</ul>
+                    ) : (<p>No past consultations found for this patient.</p>))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
     const [currentToken, setCurrentToken] = useState(null);
     const [history, setHistory] = useState([]);
@@ -866,10 +1121,20 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
     
     useEffect(() => {
         const fetchLiveQueue = async () => {
-            if (currentToken && currentToken.doctor_id && currentToken.status !== 'completed' && currentToken.status !== 'cancelled') { 
+            let doctorId = null;
+            let queueDate = today;
+            
+            if (currentToken && currentToken.doctor_id && currentToken.status !== 'completed' && currentToken.status !== 'cancelled') {
+                doctorId = currentToken.doctor_id;
+                queueDate = currentToken.date;
+            } else if (selectedDoctorId) {
+                doctorId = selectedDoctorId;
+                queueDate = bookingDate;
+            }
+            
+            if (doctorId) {
                 try {
-                    // --- MODIFIED: Use the token's actual date for the queue URL ---
-                    const response = await apiClient.get(`/patient/queue/${currentToken.doctor_id}/${currentToken.date}`); 
+                    const response = await apiClient.get(`/patient/queue/${doctorId}/${queueDate}`); 
                     setLiveQueue(response.data);
                 } catch (err) {
                     console.error("Could not fetch live queue.");
@@ -882,7 +1147,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
         fetchLiveQueue(); 
         const queueInterval = setInterval(fetchLiveQueue, 7000); 
         return () => clearInterval(queueInterval);
-    }, [currentToken]); 
+    }, [currentToken, selectedDoctorId, bookingDate, today]); 
 
     // --- MODIFIED: Wrapped formatTime in useCallback ---
     const formatTime = useCallback((timeStr) => {
@@ -910,9 +1175,14 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
             // Only check if the token date is today
             if (currentToken && currentToken.appointment_time && currentToken.status === 'waiting' && currentToken.date === getTodayDateString()) {
                 const now = new Date();
-                const [hour, minute] = currentToken.appointment_time.split(':');
+                const parts = currentToken.appointment_time.split(':');
+                if (parts.length < 2) return;
+                const [hour, minute] = parts;
+                const h = parseInt(hour, 10);
+                const m = parseInt(minute, 10);
+                if (isNaN(h) || isNaN(m)) return;
                 const appointmentTime = new Date(); 
-                appointmentTime.setHours(parseInt(hour, 10), parseInt(minute, 10), 0, 0); 
+                appointmentTime.setHours(h, m, 0, 0); 
 
                 const startWindow = new Date(appointmentTime.getTime() - 20 * 60000); // 20 mins before
                 const endWindow = new Date(appointmentTime.getTime() + 15 * 60000);   // 15 mins after
@@ -1074,9 +1344,14 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
     const currentTimeForFilter = new Date();
     const futureSlots = availableSlots.filter(slot => {
         if (bookingDate === new Date().toISOString().split('T')[0]) { 
-            const [hour, minute] = slot.split(':');
+            const parts = slot.split(':');
+            if (parts.length < 2) return false;
+            const [hour, minute] = parts;
+            const h = parseInt(hour, 10);
+            const m = parseInt(minute, 10);
+            if (isNaN(h) || isNaN(m)) return false;
             const slotTime = new Date();
-            slotTime.setHours(parseInt(hour, 10), parseInt(minute, 10), 0, 0);
+            slotTime.setHours(h, m, 0, 0);
             return slotTime >= currentTimeForFilter; 
         }
         return true; 
@@ -1147,10 +1422,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                                             {clinics.map(clinic => (<option key={clinic.id} value={clinic.id}>{clinic.name} - {clinic.city}</option>))}
                                         </select>
                                     </div>
-                                    <DoctorSmartSearch 
-                                    clinicId={selectedClinicId} 
-                                    onDoctorFound={setSelectedDoctorId} 
-                                /> 
+ 
                                     {selectedClinicId && (
                                         <div className="input-group">
                                             <label>Select Doctor</label>
@@ -1197,22 +1469,35 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                         )}
                     </div>
 
-                    {/* --- MODIFIED: Only show Live Queue if the token is for TODAY --- */}
-                    {currentToken && currentToken.status !== 'completed' && currentToken.status !== 'cancelled' && currentToken.date === getTodayDateString() && (
+                    {/* Show Live Queue for current appointment or when booking */}
+                    {((currentToken && currentToken.status !== 'completed' && currentToken.status !== 'cancelled' && currentToken.date === getTodayDateString()) || selectedDoctorId) && (
                         <div className="card">
-                            <h2>Live Queue for Dr. {currentToken?.doctor?.name || '...'}</h2>
-                             <div className="live-queue-display">
-                                {liveQueue.length > 0 ? liveQueue.map((token, index) => (
-                                    <div 
-                                        key={token.id} 
-                                        className={`live-queue-token ${currentToken && String(token.id) === String(currentToken.id) ? 'my-token' : ''}`} 
-                                    >
-                                        {/* Show position only if token number exists */}
-                                        {token.token_number && <div className="token-position">{index + 1}</div> } 
-                                        <div className="token-number">#{token.token_number || (token.appointment_time ? 'Timed' : 'Walk-in')}</div>
-                                        <span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span>
-                                    </div>
-                                )) : <p>The queue is currently empty or loading...</p>}
+                            <h2>Live Queue for Dr. {currentToken?.doctor?.name || (selectedDoctorId && doctorsOfSelectedClinic.find(d => String(d.id) === String(selectedDoctorId))?.name) || '...'}</h2>
+                            <div className="table-container">
+                                {liveQueue.length > 0 ? (
+                                    <table className="patient-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Position</th>
+                                                <th>Token</th>
+                                                <th>Patient</th>
+                                                <th>Time</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {liveQueue.map((token, index) => (
+                                                <tr key={token.id} className={`${currentToken && String(token.id) === String(currentToken.id) ? 'my-token-row' : ''}`}>
+                                                    <td>{index + 1}</td>
+                                                    <td className="token-cell">#{token.token_number || (token.appointment_time ? 'Scheduled' : 'Walk-in')}</td>
+                                                    <td className="patient-cell">{token.patient?.name || 'Patient'}</td>
+                                                    <td>{token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}</td>
+                                                    <td><span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                ) : <p>The queue is currently empty or loading...</p>}
                             </div>
                         </div>
                     )}
@@ -1355,6 +1640,7 @@ const useInactivityTimer = (logoutCallback, timeout = 15 * 60 * 1000) => {
 function App() {
     const [loggedInUser, setLoggedInUser] = useState(null);
     const [selectedPatient, setSelectedPatient] = useState(null);
+    const [viewingHistory, setViewingHistory] = useState(null);
     const [view, setView] = useState('home');
     const [successMessage, setSuccessMessage] = useState(''); // State for success message
 
@@ -1380,7 +1666,16 @@ function App() {
         const token = localStorage.getItem('authToken');
         if (savedUser && token) {
              try { 
-                 setLoggedInUser(JSON.parse(savedUser));
+                 const parsed = JSON.parse(savedUser);
+                 // Defensive: ensure we have expected shape and valid role
+                 const validRoles = ['patient', 'doctor', 'receptionist'];
+                 if (!parsed || !parsed.user || !parsed.user.role || !validRoles.includes(parsed.user.role)) {
+                     console.warn('Saved user is missing role or malformed, clearing localStorage.', parsed);
+                     localStorage.removeItem('authToken');
+                     localStorage.removeItem('loggedInUser');
+                     return;
+                 }
+                 setLoggedInUser(parsed);
                  setView('dashboard');
              } catch (e) {
                   console.error("Error parsing saved user data:", e);
@@ -1390,40 +1685,74 @@ function App() {
     }, []);
 
     const handleLoginSuccess = (data) => {
-        if (data && data.token && data.user) {
-             localStorage.setItem('authToken', data.token);
-             localStorage.setItem('loggedInUser', JSON.stringify(data));
-             setLoggedInUser(data);
-             setView('dashboard'); 
-        } else {
-             console.error("Invalid login data received:", data);
+        try {
+            console.log('handleLoginSuccess received:', data);
+            if (!data || !data.token || !data.user || !data.user.role) {
+                console.error('Invalid login data received:', data);
+                showSuccessMessage('Login failed: invalid response from server. Please try again.');
+                return;
+            }
+            
+            // Validate role
+            const validRoles = ['patient', 'doctor', 'receptionist'];
+            if (!validRoles.includes(data.user.role)) {
+                console.error('Invalid user role received:', data.user.role);
+                showSuccessMessage('Login failed: invalid user role. Please contact support.');
+                return;
+            }
+            
+            // Defensive: ensure token is a string
+            const token = typeof data.token === 'string' ? data.token : String(data.token);
+            localStorage.setItem('authToken', token);
+            localStorage.setItem('loggedInUser', JSON.stringify(data));
+            setLoggedInUser(data);
+            setView('dashboard');
+        } catch (e) {
+            console.error('Error handling login success:', e, data);
+            showSuccessMessage('Login failed: unexpected error occurred.');
         }
     };
     
     const handleSelectPatient = (patient) => setSelectedPatient(patient);
-    const handleBackToDashboard = () => setSelectedPatient(null);
+    const handleViewHistory = (patient) => setViewingHistory(patient);
+    const handleBackToDashboard = () => {
+        setSelectedPatient(null);
+        setViewingHistory(null);
+    };
 
     const renderContent = () => {
         if (loggedInUser && loggedInUser.user && view === 'dashboard') {
             if (selectedPatient) {
                 return <ConsultationComponent patient={selectedPatient} doctor={loggedInUser.user} onBack={handleBackToDashboard} />;
             }
+            if (viewingHistory) {
+                return <PatientHistoryComponent patient={viewingHistory} onBack={handleBackToDashboard} />;
+            }
             const userRole = loggedInUser.user?.role; 
-            if (userRole === 'doctor') {
-                return <DoctorDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} onSelectPatient={handleSelectPatient} onViewAnalytics={() => setView('analytics')} />;
+            switch (userRole) {
+                case 'doctor':
+                    return <DoctorDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} onSelectPatient={handleSelectPatient} onViewHistory={handleViewHistory} onViewAnalytics={() => setView('analytics')} />;
+                case 'receptionist':
+                    return <ReceptionistDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} onSelectPatient={handleSelectPatient} onViewHistory={handleViewHistory} onViewAnalytics={() => setView('analytics')} onManageSchedules={() => setView('schedules')} />;
+                case 'patient':
+                    return <PatientDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} />;
+                default:
+                    // Defensive fallback: if role missing or unknown, clear localStorage and show login
+                    console.warn("Unknown or missing user role:", userRole);
+                    localStorage.removeItem('authToken');
+                    localStorage.removeItem('loggedInUser');
+                    setLoggedInUser(null);
+                    setView('login');
+                    return <LoginPage apiClient={apiClient} onLoginSuccess={handleLoginSuccess} onSwitchToRegister={() => setView('register')} onBackToHome={() => setView('home')} showSuccessMessage={showSuccessMessage} />;
             }
-            if (userRole === 'receptionist') {
-                return <ReceptionistDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} onSelectPatient={handleSelectPatient} onViewAnalytics={() => setView('analytics')} />;
-            }
-             if (userRole === 'patient') {
-                return <PatientDashboardComponent loggedInUser={loggedInUser} onLogout={handleLogout} />;
-            }
-             console.warn("Unknown or missing user role:", userRole);
-             return <div>Error: Unknown user role. Please log out and back in.</div>;
         }
         
         if(view === 'analytics' && loggedInUser){
             return <AnalyticsDashboardComponent onBack={() => setView('dashboard')} />;
+        }
+        
+        if(view === 'schedules' && loggedInUser){
+            return <ScheduleManagement apiClient={apiClient} onBack={() => setView('dashboard')} />;
         }
 
         switch (view) {

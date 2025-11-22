@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-from .views import RecommendDoctorView
+
 
 urlpatterns = [
     # Public & Analytics
@@ -41,7 +41,15 @@ urlpatterns = [
     path('consultations/create/', views.ConsultationCreateView.as_view(), name='consultation-create'),
 
     # AI
+    path('ai-summary/', views.SimpleAISummaryView.as_view(), name='ai-history-summary'),
     path('patient-summary/<int:patient_id>/', views.PatientHistorySummaryView.as_view(), name='patient-ai-summary'),
+    path('patient-summary/status/', views.AIModelStatusView.as_view(), name='patient-ai-summary-status'),
+    path('patient-summary/load/', views.AIModelLoadView.as_view(), name='patient-ai-summary-load'),
+    path('me/', views.MeView.as_view(), name='me'),
+
+    # Schedule Management
+    path('schedules/', views.DoctorScheduleListView.as_view(), name='doctor-schedules'),
+    path('schedules/<int:doctor_id>/', views.DoctorScheduleUpdateView.as_view(), name='doctor-schedule-update'),
 
     # IVR & SMS
     path('ivr/welcome/', views.ivr_welcome, name='ivr-welcome'),
@@ -54,5 +62,5 @@ urlpatterns = [
     path('ivr/confirm-booking/', views.ivr_confirm_booking, name='ivr-confirm-booking'),
     path('sms/incoming/', views.handle_incoming_sms, name='incoming-sms'),
 
-    path('recommend-doctor/', RecommendDoctorView.as_view(), name='recommend-doctor'), #ai recommends
+
 ]

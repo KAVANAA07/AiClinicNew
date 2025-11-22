@@ -20,8 +20,12 @@ def _get_embedding_model():
     """Lazy-load the SentenceTransformer model"""
     global _EMB_MODEL
     if _EMB_MODEL is None:
-        from sentence_transformers import SentenceTransformer
-        _EMB_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        try:
+            from sentence_transformers import SentenceTransformer
+            _EMB_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        except ImportError as e:
+            print(f"SentenceTransformers not available: {e}")
+            return None
     return _EMB_MODEL
 
 

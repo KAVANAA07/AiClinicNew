@@ -2,11 +2,10 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.db.models import Count, Avg, F
-# --- REMOVED: models import ---
 from datetime import timedelta
 # --- REMOVED: transaction import ---
 # from django.db import transaction # No longer needed here
-from .models import Doctor, Patient, Token, Consultation, Clinic, Receptionist, PrescriptionItem
+from .models import Doctor, Patient, Token, Consultation, Clinic, Receptionist, PrescriptionItem, DoctorSchedule
 
 User = get_user_model()
 
@@ -61,10 +60,10 @@ class TokenSerializer(serializers.ModelSerializer):
     # Keep these ID fields for easier logic access if needed
     doctor_id = serializers.ReadOnlyField(source='doctor.id')
     clinic_id = serializers.ReadOnlyField(source='clinic.id')
+    token_number = serializers.CharField(read_only=True)
     
     class Meta:
         model = Token
-        token_number = serializers.CharField(read_only=True) 
         fields = ['id', 'token_number', 'patient', 'doctor', 'doctor_id', 'created_at', 'status', 'clinic', 'clinic_id', 'appointment_time']
 
 
@@ -97,8 +96,9 @@ class PatientRegisterSerializer(serializers.ModelSerializer):
 
     def validate_username(self, value):
         """ Check if username is taken """
-        if User.objects.filter(username=value, is_active=True).exists():
-             raise serializers.ValidationError("This username is already taken.")
+        # Disallow reusing any existing username to prevent role/profile clashes
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("This username is already taken.")
         # Allow reusing username if user is inactive (optional, adjust if needed)
         # if User.objects.filter(username=value).exists():
         #    raise serializers.ValidationError("This username is already taken.")
@@ -110,12 +110,12 @@ class PatientRegisterSerializer(serializers.ModelSerializer):
         attrs.pop('password2')
         return attrs
 
-    # Reverted create method - uses create_user which makes user active by default
     def create(self, validated_data):
         user = User.objects.create_user(
             username=validated_data['username'],
-            password=validated_data['password']
-            # is_active=True is the default for create_user
+            password=validated_data['password'],
+            is_staff=False,
+            is_superuser=False
         )
         Patient.objects.create(
             user=user,
@@ -123,7 +123,6 @@ class PatientRegisterSerializer(serializers.ModelSerializer):
             age=validated_data['age'],
             phone_number=validated_data['phone_number']
         )
-        print(f"Created new ACTIVE user: {user.username}") # Log change
         return user
 
 
@@ -149,6 +148,17 @@ class ClinicWithDoctorsSerializer(serializers.ModelSerializer):
             return round(avg_wait_data['avg_duration'].total_seconds() / 60)
         return 0
 
+
+class DoctorScheduleSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source='doctor.name', read_only=True)
+    
+    class Meta:
+        model = DoctorSchedule
+        fields = ['id', 'doctor', 'doctor_name', 'start_time', 'end_time', 'slot_duration_minutes', 'max_slots_per_day', 'is_active']
+        
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        return data
 
 class AnonymizedTokenSerializer(serializers.ModelSerializer):
     token_number = serializers.CharField(read_only=True) 

@@ -868,6 +868,172 @@ body {
     margin-top: 1rem;
 }
 
+.loading-message {
+    text-align: center;
+    padding: 2rem;
+    color: var(--dark-gray);
+    font-style: italic;
+    background-color: var(--light-gray);
+    border-radius: var(--border-radius);
+    margin-bottom: 1rem;
+}
+
+/* Professional Table Styles */
+.table-container {
+    overflow-x: auto;
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-sm);
+}
+
+.patient-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--white-color);
+    font-size: 0.9rem;
+}
+
+.patient-table thead {
+    background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));
+    color: var(--white-color);
+}
+
+.patient-table th {
+    padding: 1rem 0.75rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid var(--primary-hover);
+}
+
+.patient-table td {
+    padding: 0.875rem 0.75rem;
+    border-bottom: 1px solid var(--medium-gray);
+    vertical-align: middle;
+}
+
+.patient-table tbody tr {
+    transition: background-color 0.2s;
+}
+
+.patient-table tbody tr:hover {
+    background-color: rgba(0, 51, 102, 0.02);
+}
+
+.patient-table tbody tr:nth-child(even) {
+    background-color: rgba(244, 247, 249, 0.5);
+}
+
+.token-cell {
+    font-weight: 700;
+    color: var(--primary-color);
+    font-size: 0.95rem;
+}
+
+.patient-cell {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.table-btn {
+    padding: 0.4rem 0.8rem;
+    border: none;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    min-width: 70px;
+}
+
+.start-btn {
+    background: var(--highlight-color);
+    color: var(--white-color);
+}
+
+.start-btn:hover {
+    background: var(--highlight-hover);
+    transform: translateY(-1px);
+}
+
+.history-btn {
+    background: var(--info-color);
+    color: var(--white-color);
+}
+
+.history-btn:hover {
+    background: #1976D2;
+    transform: translateY(-1px);
+}
+
+.skip-btn {
+    background: var(--status-skipped);
+    color: var(--white-color);
+}
+
+.skip-btn:hover {
+    background: #5D4037;
+    transform: translateY(-1px);
+}
+
+.cancel-btn {
+    background: var(--danger-color);
+    color: var(--white-color);
+}
+
+.cancel-btn:hover {
+    background: #C62828;
+    transform: translateY(-1px);
+}
+
+.consult-btn {
+    background: var(--success-color);
+    color: var(--white-color);
+}
+
+.consult-btn:hover {
+    background: #388E3C;
+    transform: translateY(-1px);
+}
+
+.disabled-text {
+    color: var(--dark-gray);
+    font-style: italic;
+    font-size: 0.8rem;
+}
+
+.next-patient-row {
+    background: linear-gradient(90deg, rgba(255, 152, 0, 0.1), transparent) !important;
+    border-left: 4px solid var(--highlight-color);
+}
+
+.current-consultation-row {
+    background: linear-gradient(90deg, rgba(0, 51, 102, 0.1), transparent) !important;
+    border-left: 4px solid var(--primary-color);
+}
+
+.current-patient .patient-table {
+    border: 2px solid var(--primary-color);
+}
+
+@media (max-width: 768px) {
+    .patient-table {
+        font-size: 0.8rem;
+    }
+    
+    .patient-table th,
+    .patient-table td {
+        padding: 0.5rem 0.4rem;
+    }
+    
+    .table-btn {
+        padding: 0.3rem 0.6rem;
+        font-size: 0.75rem;
+        min-width: 60px;
+    }
+}
+
 
 /* --- 7. Analytics --- */
 .analytics-content {
@@ -1043,7 +1209,18 @@ body {
 }
 
 
-/* --- 9. Responsive --- */
+/* --- 9. Table Responsive --- */
+@media (max-width: 992px) {
+    .table-container {
+        overflow-x: scroll;
+    }
+    
+    .patient-table {
+        min-width: 800px;
+    }
+}
+
+/* --- 10. Responsive --- */
 @media (max-width: 992px) {
 
     .staff-dashboard-layout,
@@ -1056,6 +1233,117 @@ body {
     .portal-section {
         grid-template-columns: 1fr;
     }
+}
+
+/* Schedule Management Styles */
+.schedule-info {
+    color: var(--dark-gray);
+    margin-bottom: 20px;
+    font-size: 0.95em;
+}
+
+.schedule-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+}
+
+.schedule-card {
+    border: 1px solid var(--light-gray);
+    border-radius: 8px;
+    padding: 20px;
+    background: white;
+}
+
+.schedule-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid var(--light-gray);
+}
+
+.schedule-header h3 {
+    margin: 0;
+    color: var(--primary-color);
+}
+
+.schedule-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 24px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: var(--primary-color);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(26px);
+}
+
+.schedule-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+.schedule-summary {
+    background: var(--light-gray);
+    padding: 15px;
+    border-radius: 6px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.summary-item {
+    font-size: 0.9em;
 }
 
 @media (max-width: 768px) {
@@ -1082,4 +1370,52 @@ body {
     .presc-input-short {
         width: 100%;
     }
+    
+    .schedule-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .schedule-summary {
+        flex-direction: column;
+    }
+}
+
+/* Action buttons styling */
+.action-buttons {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+}
+
+/* Patient dashboard queue styling */
+.my-token-row {
+    background-color: #e8f5e8 !important;
+    border: 2px solid var(--primary-color) !important;
+}
+
+.distance-info {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.9em;
+}
+
+.distance-info svg {
+    width: 16px;
+    height: 16px;
+}
+
+.table-btn.confirm-btn {
+    background-color: var(--success-color);
+    color: white;
+    padding: 4px 8px;
+    font-size: 0.8em;
+}
+
+.table-btn.confirm-btn:hover {
+    background-color: #27ae60;
 }

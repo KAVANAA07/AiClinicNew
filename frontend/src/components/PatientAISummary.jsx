@@ -22,7 +22,11 @@ const PatientAISummary = ({ patientId, token }) => {
             if (response.data.error) {
                 setError(response.data.error);
             } else {
-                setSummary(response.data.summary);
+                // Handle different response formats from the API
+                const summaryText = response.data.summary_text || 
+                                  response.data.summary || 
+                                  JSON.stringify(response.data, null, 2);
+                setSummary(summaryText);
             }
         } catch (err) {
             console.error("Summary Error:", err);

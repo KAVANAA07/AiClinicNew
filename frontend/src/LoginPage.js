@@ -11,23 +11,40 @@ function LoginPage({ apiClient, onLoginSuccess, onSwitchToRegister, onBackToHome
         e.preventDefault();
         setError('');
 
-        // 
-        // THIS IS THE CORRECTED SECTION
-        // 
-        // We use the full absolute URL of your Django server
-        // and the correct paths from your api/urls.py file.
-        // 
-      const loginUrl = activeTab === 'patient' 
-            ? '/login/' 
-            : '/login/staff/';
+        if (!username.trim() || !password.trim()) {
+            setError('Please enter both username and password.');
+            return;
+        }
+
+        const loginUrl = activeTab === 'patient' ? '/login/' : '/login/staff/';
         
         try {
             const response = await apiClient.post(loginUrl, { username, password });
+            console.log('Login response:', response?.data);
+            
+            // Validate response structure
+            if (!response.data || !response.data.token || !response.data.user) {
+                throw new Error('Invalid response structure from server');
+            }
+            
+            // Validate role matches login type
+            const userRole = response.data.user.role;
+            if (activeTab === 'patient' && userRole !== 'patient') {
+                setError('This account is not a patient account. Please use Staff Login.');
+                return;
+            }
+            if (activeTab === 'staff' && userRole === 'patient') {
+                setError('This account is not a staff account. Please use Patient Login.');
+                return;
+            }
+            
             onLoginSuccess(response.data);
         } catch (err) {
-            // Check for a specific 404 error first
-            if (err.response && err.response.status === 404) {
-                setError("Error: API endpoint not found. Check the URL.");
+            console.error('Login error:', err);
+            if (err.response?.status === 404) {
+                setError("Login service unavailable. Please try again later.");
+            } else if (err.message === 'Invalid response structure from server') {
+                setError("Server error. Please contact support.");
             } else {
                 const errorMessage = activeTab === 'patient' 
                     ? 'Invalid patient credentials.' 

@@ -1,20 +1,35 @@
 import os
 from pathlib import Path
 # import dj_database_url # No longer needed for local
-import sys 
+import sys
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file
+try:
+    from decouple import config, Config, RepositoryEnv
+    # Explicitly specify the .env file path
+    env_path = BASE_DIR / '.env'
+    if env_path.exists():
+        config = Config(RepositoryEnv(str(env_path)))
+    else:
+        config = Config()
+except ImportError:
+    # Fallback if python-decouple is not installed
+    def config(key, default=None, cast=str):
+        return os.environ.get(key, default)
+
 # --- 1. CORE LOCAL DEVELOPMENT SETTINGS ---
-SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-=+c$c$j4z!0d9v$j1w!5a)0i=d!o(l!&!1v(l3x(e&n&n7z_d3')
+SECRET_KEY = config('SECRET_KEY', 'django-insecure-=+c$c$j4z!0d9v$j1w!5a)0i=d!o(l!&!1v(l3x(e&n&n7z_d3')
 
 # DEBUG should always be True for local development
 DEBUG = True
 
 # Allow localhost, 127.0.0.1, and your ngrok hostname (without https://)
 ALLOWED_HOSTS = [
-    'b2ee8587838a.ngrok-free.app' , # Your current ngrok hostname
+    '0a490259b696.ngrok-free.app',
+    'b2ee8587838a.ngrok-free.app', # Add both URLs
     'localhost',
     '127.0.0.1'
 ]
@@ -112,6 +127,50 @@ STATIC_URL = '/static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# --- LOGGING CONFIGURATION ---
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'DEBUG',
+    },
+    'loggers': {
+        'django.server': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'api': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+    },
+}
+
 # --- 4. CORS Configuration ---
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000", # Allow your React frontend
@@ -125,16 +184,31 @@ TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'ACXXXXXXXXXXXXXXXXXXX
 TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', 'your_auth_token')
 TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '+15005550006')
 
+# --- AI / Summarization Backend Configuration ---
+# Choose the AI backend. Options:
+#  - 'local' : use a locally-loaded Hugging Face pipeline (requires transformers + torch installed)
+#  - 'hf'    : use Hugging Face Inference API (recommended if you don't want to host weights locally)
+#  - 'openai': use OpenAI-compatible API (optional)
+# AI backend selection
+AI_BACKEND = config('AI_BACKEND', 'hf')
+
+# Hugging Face Inference API settings (only used when AI_BACKEND == 'hf')
+# Example HF_INFERENCE_API_URL: https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6
+HF_INFERENCE_API_URL = config('HF_INFERENCE_API_URL', '')
+# Your Hugging Face API token (keep secret; do NOT commit to source control)
+HF_API_TOKEN = config('HF_API_TOKEN', '')
+
+# OpenAI settings (only used when AI_BACKEND == 'openai')
+OPENAI_API_KEY = config('OPENAI_API_KEY', '')
+OPENAI_MODEL = config('OPENAI_MODEL', 'gpt-3.5-turbo')
+
 # --- 6. DJANGO-Q SETTINGS ---
 Q_CLUSTER = {
     'name': 'clinic-q-local',
-    'workers': 4,
+    'workers': 2,
     'timeout': 90,
     'retry': 120,
     'queue_limit': 50,
     'catch_up': False,
-    # This will correctly default to localhost if REDIS_URL isn't set
-    'redis': os.environ.get('REDIS_URL', 'redis://localhost:6379/0'),
-
-    
+    'orm': 'default',  # Use Django ORM instead of Redis
 }

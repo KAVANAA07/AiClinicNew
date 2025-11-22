@@ -1,4 +1,4 @@
-from transformers import pipeline  # <--- ADDED FOR AI
+# Note: transformers.pipeline is imported lazily inside the view to avoid heavy imports at module import time
 from django.shortcuts import render
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token as AuthToken
 from rest_framework.views import APIView
 # --- MODIFIED: Added IntegrityError ---
-from .models import Token, Doctor, Patient, Consultation, Receptionist, Clinic, State, District, PrescriptionItem
+from .models import Token, Doctor, Patient, Consultation, Receptionist, Clinic, State, District, PrescriptionItem, DoctorSchedule
 from .serializers import (
     TokenSerializer,
     DoctorSerializer,
@@ -14,13 +14,15 @@ from .serializers import (
     PatientRegisterSerializer,
     ClinicWithDoctorsSerializer,
     PatientSerializer,
-    AnonymizedTokenSerializer
+    AnonymizedTokenSerializer,
+    DoctorScheduleSerializer
 )
 from django.db.models import Count, Avg, F, Q, Case, When, Value
 from django.utils import timezone
 from math import radians, sin, cos, sqrt, atan2
 from django.contrib.auth import authenticate, get_user_model
 from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from twilio.twiml.voice_response import VoiceResponse
 from django.http import HttpResponse
 # --- MODIFIED: Added IntegrityError ---
@@ -34,6 +36,8 @@ from django_q.tasks import async_task
 from datetime import datetime, timedelta, time
 # --- FIX: Import get_random_string ---
 from django.utils.crypto import get_random_string
+import threading
+import logging
 
 
 User = get_user_model()
@@ -50,17 +54,37 @@ def _get_available_slots_for_doctor(doctor_id, date_str):
     """Returns list of available HH:MM strings for a single date."""
     try:
         target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-    except ValueError:
+        doctor = Doctor.objects.get(id=doctor_id)
+    except (ValueError, Doctor.DoesNotExist):
         return None
-    start_time = time(9, 0)
-    end_time = time(17, 0)
-    slot_duration = timedelta(minutes=15)
+    
+    # Get doctor's schedule or use defaults
+    try:
+        schedule = DoctorSchedule.objects.get(doctor=doctor)
+        start_time = schedule.start_time
+        end_time = schedule.end_time
+        slot_duration_minutes = schedule.slot_duration_minutes
+        max_slots = schedule.max_slots_per_day
+    except DoctorSchedule.DoesNotExist:
+        # Default schedule if none exists
+        start_time = time(9, 0)
+        end_time = time(17, 0)
+        slot_duration_minutes = 15
+        max_slots = None
+    
+    slot_duration = timedelta(minutes=slot_duration_minutes)
     all_slots = []
     current_time = datetime.combine(target_date, start_time)
     end_datetime = datetime.combine(target_date, end_time)
+    
     while current_time < end_datetime:
         all_slots.append(current_time.time())
         current_time += slot_duration
+        
+        # Limit slots if max_slots is set
+        if max_slots and len(all_slots) >= max_slots:
+            break
+    
     booked_tokens = Token.objects.filter(
         doctor_id=doctor_id, date=target_date, appointment_time__isnull=False
     ).exclude(status__in=['cancelled', 'skipped'])
@@ -136,7 +160,12 @@ def _create_ivr_token(doctor, appointment_date, appointment_time_str, caller_pho
                 # --- THIS IS THE FIXED LINE ---
                 temp_password = get_random_string(length=8)
                 # --- END OF FIX ---
-                new_user = User.objects.create_user(username=caller_phone_number, password=temp_password)
+                new_user = User.objects.create_user(
+                    username=caller_phone_number, 
+                    password=temp_password,
+                    is_staff=False,
+                    is_superuser=False
+                )
                 patient.user = new_user
                 patient.save()
                 
@@ -242,6 +271,7 @@ class ClinicAnalyticsView(APIView):
         }
         return Response(stats, status=status.HTTP_200_OK)
 
+@method_decorator(csrf_exempt, name='dispatch')
 class PatientRegisterView(generics.CreateAPIView):
     serializer_class = PatientRegisterSerializer
     permission_classes = [permissions.AllowAny]
@@ -258,8 +288,17 @@ class PatientRegisterView(generics.CreateAPIView):
                     send_sms_notification(patient.phone_number, message)
                 except Exception as e:
                     print(f"Failed to send welcome SMS: {e}")
-            patient_data = PatientSerializer(patient).data
-            user_data = { 'token': token.key, 'user': {**patient_data, 'role': 'patient'} }
+
+            # Build a normalized user payload so frontend always receives the same shape
+            profile = {
+                'id': user.id,
+                'username': user.username,
+                'name': patient.name,
+                'age': patient.age,
+                'phone_number': patient.phone_number,
+                'role': 'patient'
+            }
+            user_data = {'token': token.key, 'user': profile}
             return Response(user_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -419,6 +458,8 @@ class PatientCreateTokenView(APIView):
 class TokenListCreate(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = TokenSerializer
+    
+
 
     def get_queryset(self):
         user = self.request.user
@@ -561,15 +602,56 @@ class LoginView(APIView):
         username, password = request.data.get('username'), request.data.get('password')
         user = authenticate(request, username=username, password=password)
         if user is not None:
-             if not user.is_active:
-                 if hasattr(user, 'patient'): return Response({'error': 'Account not verified. Please contact support.'}, status=status.HTTP_401_UNAUTHORIZED)
-                 else: return Response({'error': 'Account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
-             if hasattr(user, 'patient'):
-                 token, _ = AuthToken.objects.get_or_create(user=user)
-                 patient_data = PatientSerializer(user.patient).data
-                 user_data = { 'token': token.key, 'user': {**patient_data, 'role': 'patient'} }
-                 return Response(user_data, status=status.HTTP_200_OK)
-        return Response({'error': 'Invalid Credentials or not a patient.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.is_active:
+                # If user has a patient profile, give a clearer message for patients
+                if hasattr(user, 'patient'):
+                    return Response({'error': 'Account not verified. Please contact support.'}, status=status.HTTP_401_UNAUTHORIZED)
+                else:
+                    return Response({'error': 'Account is inactive.'}, status=status.HTTP_403_FORBIDDEN)
+
+            # Prefer staff roles (doctor/receptionist) over patient only when the user
+            # actually has a doctor or receptionist profile in the database.
+            # We DO NOT treat a user as staff solely because `is_staff` is True.
+            if hasattr(user, 'doctor') or hasattr(user, 'receptionist'):
+                token, _ = AuthToken.objects.get_or_create(user=user)
+                profile_data = {
+                    'id': user.id,
+                    'username': user.username,
+                    'email': getattr(user, 'email', ''),
+                    'is_ivr_user': getattr(user, 'is_ivr_user', False),
+                }
+                clinic_data = None
+                role = 'staff'
+                if hasattr(user, 'doctor'):
+                    role = 'doctor'
+                    profile_data['name'] = user.doctor.name
+                    if user.doctor.clinic:
+                        clinic_data = {'id': user.doctor.clinic.id, 'name': user.doctor.clinic.name}
+                elif hasattr(user, 'receptionist'):
+                    role = 'receptionist'
+                    profile_data['name'] = user.get_full_name() or user.username
+                    if user.receptionist.clinic:
+                        clinic_data = {'id': user.receptionist.clinic.id, 'name': user.receptionist.clinic.name}
+
+                response_data = {'token': token.key, 'user': {**profile_data, 'role': role, 'clinic': clinic_data}}
+                return Response(response_data, status=status.HTTP_200_OK)
+
+            # Fallback to patient login if user has a patient profile
+            if hasattr(user, 'patient'):
+                token, _ = AuthToken.objects.get_or_create(user=user)
+                patient = user.patient
+                profile_data = {
+                    'id': user.id,
+                    'username': user.username,
+                    'name': patient.name,
+                    'age': patient.age,
+                    'phone_number': patient.phone_number,
+                    'role': 'patient'
+                }
+                user_data = {'token': token.key, 'user': profile_data}
+                return Response(user_data, status=status.HTTP_200_OK)
+
+        return Response({'error': 'Invalid Credentials.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class StaffLoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -579,15 +661,31 @@ class StaffLoginView(APIView):
         user = authenticate(username=username, password=password)
         if user is not None and user.is_staff:
             token, created = AuthToken.objects.get_or_create(user=user)
-            role, profile_data, clinic_data = 'unknown', {'username': user.username}, None
+            # Build a consistent user payload for the frontend
+            role = 'unknown'
+            profile_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': getattr(user, 'email', ''),
+                'is_ivr_user': getattr(user, 'is_ivr_user', False),
+            }
+
+            clinic_data = None
             if hasattr(user, 'doctor'):
                 role = 'doctor'
                 profile_data['name'] = user.doctor.name
-                if user.doctor.clinic: clinic_data = {'id': user.doctor.clinic.id, 'name': user.doctor.clinic.name}
+                if user.doctor.clinic:
+                    clinic_data = {'id': user.doctor.clinic.id, 'name': user.doctor.clinic.name}
             elif hasattr(user, 'receptionist'):
                 role = 'receptionist'
                 profile_data['name'] = user.get_full_name() or user.username
-                if user.receptionist.clinic: clinic_data = {'id': user.receptionist.clinic.id, 'name': user.receptionist.clinic.name}
+                if user.receptionist.clinic:
+                    clinic_data = {'id': user.receptionist.clinic.id, 'name': user.receptionist.clinic.name}
+            else:
+                # If user is staff but not assigned a specific profile yet, mark as 'staff'
+                if user.is_staff:
+                    role = 'staff'
+
             response_data = {'token': token.key, 'user': {**profile_data, 'role': role, 'clinic': clinic_data}}
             return Response(response_data, status=status.HTTP_200_OK)
         return Response({'error': 'Invalid Credentials or not a staff member.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -741,11 +839,27 @@ class TokenUpdateStatusView(generics.UpdateAPIView):
 
 @csrf_exempt
 def ivr_welcome(request):
-    response = VoiceResponse(); states = State.objects.all()
-    if not states: response.say("Sorry, no clinics are configured. Goodbye."); response.hangup(); return HttpResponse(str(response), content_type='text/xml')
-    gather = response.gather(num_digits=1, action='/api/ivr/handle-state/'); say_message = "Welcome to ClinicFlow AI. Please select a state. "
-    for i, state in enumerate(states): say_message += f"For {state.name}, press {i + 1}. "
-    gather.say(say_message); response.redirect('/api/ivr/welcome/'); return HttpResponse(str(response), content_type='text/xml')
+    try:
+        response = VoiceResponse()
+        states = State.objects.all()
+        if not states:
+            response.say("Sorry, no clinics are configured. Goodbye.")
+            response.hangup()
+            return HttpResponse(str(response), content_type='text/xml')
+        
+        gather = response.gather(num_digits=1, action='/api/ivr/handle-state/')
+        say_message = "Welcome to ClinicFlow AI. Please select a state. "
+        for i, state in enumerate(states):
+            say_message += f"For {state.name}, press {i + 1}. "
+        gather.say(say_message)
+        response.redirect('/api/ivr/welcome/')
+        return HttpResponse(str(response), content_type='text/xml')
+    except Exception as e:
+        print(f"IVR Welcome Error: {e}")
+        response = VoiceResponse()
+        response.say("Sorry, there was a system error. Please try again later.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
 
 @csrf_exempt
 def ivr_handle_state(request):
@@ -873,12 +987,27 @@ def ivr_confirm_booking(request):
     choice = request.POST.get('Digits')
     response = VoiceResponse()
     # Get details passed in the action URL's query parameters
-    doctor_id = request.GET.get('doctor_id')
-    date_str = request.GET.get('date')
-    time_str = request.GET.get('time')
-    caller_phone_number = request.GET.get('phone') # Use phone from query param
+    # Prefer GET query params (action URL) but fall back to POST form fields (Twilio sometimes posts From)
+    doctor_id = request.GET.get('doctor_id') or request.POST.get('doctor_id')
+    date_str = request.GET.get('date') or request.POST.get('date')
+    time_str = request.GET.get('time') or request.POST.get('time')
+    caller_phone_number = (request.GET.get('phone') or request.POST.get('phone') or request.POST.get('From'))
 
     if not all([doctor_id, date_str, time_str, caller_phone_number]):
+        # Try parsing raw QUERY_STRING as a last resort (some test clients may not populate request.GET)
+        try:
+            from urllib.parse import parse_qs
+            raw_qs = request.META.get('QUERY_STRING', '')
+            parsed = parse_qs(raw_qs)
+            # parsed values are lists
+            if not doctor_id and parsed.get('doctor_id'): doctor_id = parsed.get('doctor_id')[0]
+            if not date_str and parsed.get('date'): date_str = parsed.get('date')[0]
+            if not time_str and parsed.get('time'): time_str = parsed.get('time')[0]
+            if not caller_phone_number and parsed.get('phone'): caller_phone_number = parsed.get('phone')[0]
+        except Exception:
+            pass
+        # Debug output to help tests understand why booking info was missing
+        print(f"IVR Confirm: After fallback parse. PATH={request.get_full_path()} QUERY_STRING={request.META.get('QUERY_STRING')} GET={dict(request.GET)} POST={dict(request.POST)} ParsedFallback_doctor={doctor_id} date={date_str} time={time_str} phone={caller_phone_number}")
         response.say("Sorry, booking information is missing. Please start over.")
         response.redirect('/api/ivr/welcome/')
         return HttpResponse(str(response), content_type='text/xml')
@@ -940,7 +1069,17 @@ def ivr_confirm_booking(request):
 def handle_incoming_sms(request):
     from_number = request.POST.get('From', None)
     body = request.POST.get('Body', '').strip().upper()
-    response = VoiceResponse() # Using VoiceResponse to generate TwiML SMS reply
+    # Try different Twilio imports for SMS response
+    try:
+        from twilio.twiml.messaging_response import MessagingResponse
+        response = MessagingResponse()
+    except ImportError:
+        try:
+            from twilio.twiml import MessagingResponse
+            response = MessagingResponse()
+        except ImportError:
+            # Fallback to VoiceResponse which also works for SMS in some versions
+            response = VoiceResponse()
     if from_number and body == 'CANCEL':
         today = timezone.now().date()
         try:
@@ -969,73 +1108,447 @@ def handle_incoming_sms(request):
 
 # Initialize global variable as None.
 # We will load the AI model ONLY when the first request comes in.
-ai_summarizer = None 
+ai_summarizer = None
+ai_model_name = None
+ai_load_lock = threading.Lock()
+logger = logging.getLogger(__name__)
+
+
+def load_ai_model(model_name: str = "sshleifer/distilbart-cnn-12-6"):
+    """Load the HF summarization pipeline into the global `ai_summarizer`.
+
+    This function is idempotent and thread-safe. It returns True on success,
+    False on failure (and logs the exception).
+    """
+    global ai_summarizer, ai_model_name
+
+    # Fast path
+    if ai_summarizer is not None:
+        return True
+
+    with ai_load_lock:
+        if ai_summarizer is not None:
+            return True
+        try:
+            # Import lazily to avoid heavy deps at module import time
+            from transformers import pipeline as _hf_pipeline
+            ai_model_name = model_name
+            logger.info(f"Loading AI model {ai_model_name}...")
+            ai_summarizer = _hf_pipeline("summarization", model=ai_model_name)
+            logger.info("AI model loaded successfully.")
+            return True
+        except Exception as e:
+            logger.exception("Failed to load AI model: %s", e)
+            ai_summarizer = None
+            ai_model_name = None
+            return False
 
 class PatientHistorySummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, patient_id):
-        # Tell Python we want to write to the global variable
-        global ai_summarizer 
-        
+        """
+        Returns a structured JSON summary of the patient's consultation history.
+
+        Behavior:
+        - Lazy-loads the HF summarization pipeline on first use.
+        - Sends the concatenated history with a short instruction that asks the model
+          to output a JSON object with the following keys:
+            - chief_complaint
+            - history_of_present_illness
+            - past_medical_history
+            - medications
+            - allergies
+            - examination_findings
+            - assessment
+            - plan
+        - Attempts to parse JSON out of the model output. If parsing fails, falls back
+          to returning a plain-text summary under the key `summary_text`.
+        """
+        global ai_summarizer, ai_model_name
+
         try:
-            print(f"Requesting summary for Patient ID: {patient_id}")
-            
-            # 1. LAZY LOADING CHECK
-            # Only if the variable is None, we load the model.
+            # 1. Load model if necessary
+            # Ensure model is loaded (may be loaded in background by admin/dev)
             if ai_summarizer is None:
-                print("⚡ FIRST RUN: Loading AI Model into memory... This takes 20-30s...")
-                # This line downloads/loads the model
-                ai_summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-                print("✅ Model Loaded Successfully! Future requests will be instant.")
+                ok = load_ai_model()
+                if not ok:
+                    return Response({"error": "AI model not available. Trigger load via POST /api/patient-summary/load/ or install model dependencies."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
-            # 2. Fetch COMPLETED consultations
-            consultations = Consultation.objects.filter(
-                patient__id=patient_id
-            ).order_by('date')
-
+            # 2. Fetch consultations
+            consultations = Consultation.objects.filter(patient__id=patient_id).order_by('date')
             if not consultations.exists():
-                 return Response({"summary": "No previous consultation history found."})
+                return Response({"error": "No previous consultation history found."}, status=status.HTTP_404_NOT_FOUND)
 
-            # 3. Combine notes
-            full_text = ""
+            # 3. Combine notes into a single prompt
+            full_text = []
             for consult in consultations:
                 if consult.notes:
-                    full_text += f"Date: {consult.date}. Notes: {consult.notes}. "
+                    full_text.append(f"Date: {consult.date}. Notes: {consult.notes}")
+            joined = "\n\n".join(full_text)
 
-            # 4. Safety Check (Too short?)
-            if len(full_text.split()) < 30:
-                return Response({"summary": "History is too short for AI. Recent notes: " + full_text})
+            if len(joined.split()) < 30:
+                return Response({"error": "History too short for AI summarization.", "recent_notes": joined}, status=status.HTTP_400_BAD_REQUEST)
 
-            # 5. Generate Summary (Using the now-loaded model)
-            summary_result = ai_summarizer(full_text, max_length=150, min_length=30, do_sample=False)
-            return Response({"summary": summary_result[0]['summary_text']})
+            # 4. Build instruction + payload asking for JSON output
+            instruction = (
+                "Extract a structured patient history from the text below. "
+                "Output only a valid JSON object with these keys: chief_complaint, history_of_present_illness, "
+                "past_medical_history, medications, allergies, examination_findings, assessment, plan. "
+                "If a field is not present, set it to an empty string. Do not include any additional commentary.\n\n"
+            )
+            prompt = instruction + "PATIENT_HISTORY:\n" + joined
+
+            # 5. Ask the configured AI backend to summarize.
+            # This will dispatch to local pipeline or a hosted API depending on settings.
+            from .ai_client import summarize_text, get_model_name
+
+            try:
+                result = summarize_text(prompt, max_length=512, min_length=64)
+            except RuntimeError as re:
+                return Response({"error": str(re)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            # normalize result
+            raw_text = ''
+            if isinstance(result, dict):
+                raw_text = result.get('summary_text', '')
+            elif isinstance(result, list) and len(result) > 0 and isinstance(result[0], dict):
+                raw_text = result[0].get('summary_text', '')
+            else:
+                raw_text = str(result)
+            ai_model_name = get_model_name()
+
+            # 6. Try to extract JSON from the returned text
+            import re, json
+            # Find first {...} block
+            m = re.search(r"\{[\s\S]*\}", raw_text)
+            if m:
+                candidate = m.group(0)
+                try:
+                    parsed = json.loads(candidate)
+                    # Ensure all keys exist
+                    keys = [
+                        'chief_complaint', 'history_of_present_illness', 'past_medical_history',
+                        'medications', 'allergies', 'examination_findings', 'assessment', 'plan'
+                    ]
+                    structured = {k: (parsed.get(k, '') if isinstance(parsed.get(k, ''), str) else parsed.get(k, '')) for k in keys}
+                    # Also include a short raw summary for convenience
+                    structured['raw_summary'] = raw_text
+                    structured['model'] = ai_model_name
+                    return Response(structured)
+                except Exception:
+                    # fall through to text fallback
+                    pass
+
+            # 7. Fallback: return plain text summary
+            return Response({"summary_text": raw_text, "model": ai_model_name})
 
         except Exception as e:
             print(f"AI ERROR: {str(e)}")
             return Response({"error": str(e)}, status=500)
 # --- ADD THIS TO THE BOTTOM OF api/views.py ---
-from .ai_logic import find_best_doctor 
+ 
 
-class RecommendDoctorView(APIView):
+
+class AIModelStatusView(APIView):
+    """Simple status endpoint to check whether the AI summarizer is loaded."""
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        from .ai_client import is_model_loaded, get_model_name
+        return Response({
+            'loaded': bool(is_model_loaded()),
+            'model': get_model_name()
+        })
+
+
+class AIModelLoadView(APIView):
+    """Trigger loading of the AI model.
+
+    POST -> starts loading (synchronously) and returns 200 on success or 500 on failure.
+    If you want non-blocking behavior, call this endpoint and it will start a background
+    thread and return 202 Accepted.
+    """
+    permission_classes = [permissions.AllowAny]
+
     def post(self, request):
-        symptoms = request.data.get('symptoms', '')
-        clinic_id = request.data.get('clinic_id')
-        
-        if not symptoms or not clinic_id:
-            return Response({"error": "Missing data"}, status=400)
+        from .ai_client import is_model_loaded, load_local_model, load_model_background, get_model_name
 
-        recommended_doc = find_best_doctor(symptoms, clinic_id)
-        
-        if recommended_doc:
-            return Response({
-                "id": recommended_doc.id,
-                "name": f"Dr. {recommended_doc.user.get_full_name()}",
-                "specialization": recommended_doc.specialization,
-                "found": True
-            })
+        # If model/backend already reported as available, return ready
+        if is_model_loaded():
+            return Response({'loaded': True, 'model': get_model_name()})
+
+        background = request.query_params.get('background', '0') in ['1', 'true', 'True']
+        if background:
+            load_model_background()
+            return Response({'message': 'AI model loading started in background.'}, status=status.HTTP_202_ACCEPTED)
+
+        ok = load_local_model()
+        if ok:
+            return Response({'loaded': True, 'model': get_model_name()})
         else:
+            return Response({'error': 'Failed to load AI model. Check logs.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AIHistorySummaryView(APIView):
+    """Simple AI summary endpoint that matches frontend expectations."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            patient_history = request.data.get('patient_history', '')
+            phone = request.data.get('phone', '')
+            
+            if not patient_history.strip():
+                return Response({'error': 'Patient history is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            from .ai_client import summarize_text, get_model_name
+            
+            try:
+                prompt = f"Summarize the following patient medical history in a clear, professional format:\n\n{patient_history}"
+                result = summarize_text(prompt, max_length=300, min_length=50)
+                
+                summary = ''
+                if isinstance(result, dict):
+                    summary = result.get('summary_text', str(result))
+                elif isinstance(result, list) and len(result) > 0:
+                    if isinstance(result[0], dict):
+                        summary = result[0].get('summary_text', str(result[0]))
+                    else:
+                        summary = str(result[0])
+                else:
+                    summary = str(result)
+                
+                return Response({
+                    'summary': summary,
+                    'model': get_model_name(),
+                    'phone': phone
+                })
+                
+            except RuntimeError as e:
+                return Response({'error': f'AI service unavailable: {str(e)}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+        except Exception as e:
+            print(f"AI Summary error: {str(e)}")
+            return Response({'error': 'Failed to generate AI summary'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MeView(APIView):
+    """Return the normalized profile for the currently authenticated user."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        # Prefer staff roles
+        if user.is_staff or hasattr(user, 'doctor') or hasattr(user, 'receptionist'):
+            profile = {
+                'id': user.id,
+                'username': user.username,
+                'email': getattr(user, 'email', ''),
+                'is_ivr_user': getattr(user, 'is_ivr_user', False),
+            }
+            clinic = None
+            role = 'staff'
+            if hasattr(user, 'doctor'):
+                role = 'doctor'
+                profile['name'] = user.doctor.name
+                if user.doctor.clinic:
+                    clinic = {'id': user.doctor.clinic.id, 'name': user.doctor.clinic.name}
+            elif hasattr(user, 'receptionist'):
+                role = 'receptionist'
+                profile['name'] = user.get_full_name() or user.username
+                if user.receptionist.clinic:
+                    clinic = {'id': user.receptionist.clinic.id, 'name': user.receptionist.clinic.name}
+
+            profile['role'] = role
+            profile['clinic'] = clinic
+            return Response({'user': profile})
+
+        # Fallback to patient
+        if hasattr(user, 'patient'):
+            p = user.patient
+            profile = {
+                'id': user.id,
+                'username': user.username,
+                'name': p.name,
+                'age': p.age,
+                'phone_number': p.phone_number,
+                'role': 'patient'
+            }
+            return Response({'user': profile})
+
+        # Generic staff fallback
+        return Response({'user': {'id': user.id, 'username': user.username, 'role': 'staff'}})
+
+# ====================================================================
+# --- SCHEDULE MANAGEMENT VIEWS ---
+# ====================================================================
+
+class DoctorScheduleListView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get all doctor schedules for the receptionist's clinic"""
+        if not hasattr(request.user, 'receptionist'):
+            return Response({'error': 'Only receptionists can manage schedules.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            clinic = request.user.receptionist.clinic
+            doctors = Doctor.objects.filter(clinic=clinic)
+            schedules = []
+            
+            for doctor in doctors:
+                try:
+                    schedule = DoctorSchedule.objects.get(doctor=doctor)
+                    serialized_data = DoctorScheduleSerializer(schedule).data
+                    schedules.append(serialized_data)
+                except DoctorSchedule.DoesNotExist:
+                    # Create default schedule if none exists
+                    from datetime import time
+                    default_schedule = DoctorSchedule.objects.create(
+                        doctor=doctor,
+                        start_time=time(9, 0),
+                        end_time=time(17, 0),
+                        slot_duration_minutes=15
+                    )
+                    serialized_data = DoctorScheduleSerializer(default_schedule).data
+                    schedules.append(serialized_data)
+                except Exception as e:
+                    print(f"Error processing doctor {doctor.id}: {e}")
+                    # Skip this doctor if there's an error
+                    continue
+            
+            return Response(schedules)
+        except Exception as e:
+            return Response({'error': f'Failed to load schedules: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class DoctorScheduleUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def patch(self, request, doctor_id):
+        """Update a doctor's schedule"""
+        if not hasattr(request.user, 'receptionist'):
+            return Response({'error': 'Only receptionists can manage schedules.'}, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            doctor = Doctor.objects.get(id=doctor_id, clinic=request.user.receptionist.clinic)
+            schedule, created = DoctorSchedule.objects.get_or_create(doctor=doctor)
+            
+            # Update schedule fields
+            if 'start_time' in request.data:
+                from datetime import time as time_obj
+                time_str = str(request.data['start_time']).strip()
+                parts = time_str.split(':')
+                hour = int(parts[0])
+                minute = int(parts[1])
+                schedule.start_time = time_obj(hour, minute)
+                    
+            if 'end_time' in request.data:
+                from datetime import time as time_obj
+                time_str = str(request.data['end_time']).strip()
+                parts = time_str.split(':')
+                hour = int(parts[0])
+                minute = int(parts[1])
+                schedule.end_time = time_obj(hour, minute)
+                    
+            if 'slot_duration_minutes' in request.data:
+                schedule.slot_duration_minutes = int(request.data['slot_duration_minutes'])
+                
+            if 'max_slots_per_day' in request.data:
+                max_slots = request.data['max_slots_per_day']
+                schedule.max_slots_per_day = int(max_slots) if max_slots else None
+                
+            if 'is_active' in request.data:
+                schedule.is_active = bool(request.data['is_active'])
+            
+            schedule.save()
+            return Response(DoctorScheduleSerializer(schedule).data)
+            
+        except Doctor.DoesNotExist:
+            return Response({'error': 'Doctor not found in your clinic.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SimpleAISummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            patient_history = request.data.get('patient_history', '')
+            phone = request.data.get('phone', '')
+            
+            if not patient_history.strip():
+                return Response({'error': 'Patient history is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Simple extractive summary
+            lines = patient_history.split('\n')
+            medical_info = []
+            
+            for line in lines:
+                line = line.strip()
+                if line and any(word in line.lower() for word in [
+                    'patient', 'doctor', 'notes', 'prescription', 'symptoms', 
+                    'diagnosis', 'treatment', 'medication', 'complaint', 'pain',
+                    'fever', 'blood', 'pressure', 'heart', 'breathing'
+                ]):
+                    medical_info.append(line)
+            
+            if medical_info:
+                summary = "MEDICAL SUMMARY:\n\n" + "\n".join(medical_info[:5])
+            else:
+                summary = "Patient medical history available. Key information extracted from consultation records."
+            
             return Response({
-                "message": "No specific match found.",
-                "found": False
+                'summary': summary,
+                'model': 'extractive_summarizer',
+                'phone': phone
             })
+            
+        except Exception as e:
+            return Response({'error': 'Failed to generate summary'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+class AIHistorySummaryView(APIView):
+    """Simple AI summary endpoint that matches frontend expectations."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            patient_history = request.data.get('patient_history', '')
+            phone = request.data.get('phone', '')
+            
+            if not patient_history.strip():
+                return Response({'error': 'Patient history is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Use the AI client to generate summary
+            from .ai_client import summarize_text, get_model_name
+            
+            try:
+                prompt = f"Summarize the following patient medical history in a clear, professional format:\n\n{patient_history}"
+                result = summarize_text(prompt, max_length=300, min_length=50)
+                
+                # Extract summary text
+                summary = ''
+                if isinstance(result, dict):
+                    summary = result.get('summary_text', str(result))
+                elif isinstance(result, list) and len(result) > 0:
+                    if isinstance(result[0], dict):
+                        summary = result[0].get('summary_text', str(result[0]))
+                    else:
+                        summary = str(result[0])
+                else:
+                    summary = str(result)
+                
+                return Response({
+                    'summary': summary,
+                    'model': get_model_name(),
+                    'phone': phone
+                })
+                
+            except RuntimeError as e:
+                return Response({'error': f'AI service unavailable: {str(e)}'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+        except Exception as e:
+            print(f"AI Summary error: {str(e)}")
+            return Response({'error': 'Failed to generate AI summary'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

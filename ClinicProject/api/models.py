@@ -154,6 +154,21 @@ class Consultation(models.Model):
     def __str__(self):
         return f"Consultation for {self.patient.name} on {self.date.strftime('%Y-%m-%d')}"
 
+class DoctorSchedule(models.Model):
+    doctor = models.OneToOneField(Doctor, on_delete=models.CASCADE, related_name='schedule')
+    start_time = models.TimeField(default='09:00')
+    end_time = models.TimeField(default='17:00')
+    slot_duration_minutes = models.IntegerField(default=15)
+    max_slots_per_day = models.IntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Schedule for Dr. {self.doctor.name}"
+
+
+
 class PrescriptionItem(models.Model):
     consultation = models.ForeignKey(
         Consultation,

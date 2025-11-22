@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Clinic, Doctor, Patient, Token, Consultation, Receptionist, State, District, PrescriptionItem
+from .models import Clinic, Doctor, Patient, Token, Consultation, Receptionist, State, District, PrescriptionItem, DoctorSchedule
 
 # Import the models and admin classes from django-q
 from django_q.models import Schedule
@@ -34,4 +34,9 @@ admin.site.register(Receptionist)
 admin.site.register(State)
 admin.site.register(District)
 admin.site.register(PrescriptionItem)
+@admin.register(DoctorSchedule)
+class DoctorScheduleAdmin(admin.ModelAdmin):
+    list_display = ['doctor', 'start_time', 'end_time', 'is_active']
+    list_filter = ['is_active']
+    search_fields = ['doctor__name']
 

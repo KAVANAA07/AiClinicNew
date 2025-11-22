@@ -3,8 +3,21 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .utils.ai_history import load_index, query_index
-from transformers import pipeline
+# Conditional imports to prevent crashes if dependencies are missing
+try:
+    from .utils.ai_history import load_index, query_index
+    from transformers import pipeline
+    AI_DEPENDENCIES_AVAILABLE = True
+except ImportError as e:
+    print(f"AI dependencies not available: {e}")
+    AI_DEPENDENCIES_AVAILABLE = False
+    # Create dummy functions to prevent crashes
+    def load_index(*args, **kwargs):
+        return None
+    def query_index(*args, **kwargs):
+        return {"status": "error", "message": "AI dependencies not installed"}
+    def pipeline(*args, **kwargs):
+        return None
 
 # --- CORRECTIONS START HERE ---
 
@@ -19,6 +32,10 @@ def get_summarizer():
     and stores it in the global variable.
     """
     global _GLOBAL_SUMMARIZER_MODEL
+    
+    if not AI_DEPENDENCIES_AVAILABLE:
+        print("AI dependencies not available. Cannot load summarizer.")
+        return None
     
     # If the model isn't loaded yet, load it
     if _GLOBAL_SUMMARIZER_MODEL is None:

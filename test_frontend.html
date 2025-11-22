@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Doctor Login</title>
+</head>
+<body>
+    <h1>Test Doctor Login</h1>
+    
+    <div id="login-section">
+        <h2>Login</h2>
+        <input type="text" id="username" placeholder="Username" value="autodoc">
+        <input type="password" id="password" placeholder="Password" value="password123">
+        <button onclick="login()">Login</button>
+    </div>
+    
+    <div id="result-section" style="display: none;">
+        <h2>Login Result</h2>
+        <pre id="login-result"></pre>
+        
+        <h2>Tokens</h2>
+        <button onclick="fetchTokens()">Fetch Tokens</button>
+        <pre id="tokens-result"></pre>
+    </div>
+
+    <script>
+        let authToken = null;
+
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/login/staff/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                document.getElementById('login-result').textContent = JSON.stringify(data, null, 2);
+                
+                if (response.ok) {
+                    authToken = data.token;
+                    document.getElementById('result-section').style.display = 'block';
+                    document.getElementById('login-section').style.display = 'none';
+                }
+            } catch (error) {
+                document.getElementById('login-result').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        async function fetchTokens() {
+            if (!authToken) {
+                alert('Please login first');
+                return;
+            }
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/tokens/', {
+                    headers: {
+                        'Authorization': `Token ${authToken}`
+                    }
+                });
+                
+                const data = await response.json();
+                document.getElementById('tokens-result').textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('tokens-result').textContent = 'Error: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>
