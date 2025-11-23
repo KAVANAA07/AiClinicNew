@@ -37,15 +37,9 @@ def send_sms_notification(to_number, message):
     
     else:
         # Simulation mode
-        print("\n" + "="*70)
-        print(f"[SMS SIMULATION] SENDING MESSAGE")
-        print("="*70)
-        print(f"TO: {to_number}")
-        print(f"MESSAGE:")
-        print(f"   {message}")
-        print("="*70)
-        print(f"SUCCESS: SMS SIMULATION COMPLETED - Message would be sent in production")
-        print("="*70 + "\n")
+        print(f"\n[SMS SIMULATION] To: {to_number}")
+        print(f"Message: {message}")
+        print(f"[SMS SIMULATION] Completed - Would send in production\n")
         
         logger.info(f"SMS simulated to {to_number}: {message[:50]}...")
         return True 

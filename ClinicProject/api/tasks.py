@@ -81,85 +81,64 @@ def send_prescription_reminder_sms(phone_number, message, **kwargs):
 # --- MODIFIED: Function to automatically CANCEL missed appointments ---
 def check_and_cancel_missed_slots():
     """
-    Checks for appointments that are past their time + grace period 
-    and still in 'waiting' status, then updates them to 'cancelled'.
+    Checks all waiting tokens and cancels any that crossed time limit.
     """
     now = timezone.now()
-    today = now.date()
     grace_period = timedelta(minutes=15)
 
-    print("\n" + "="*60)
-    print(f"[MISSED APPOINTMENTS CHECK] - {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*60)
-
-    missed_tokens = Token.objects.filter(
-        date=today,
+    # Get ALL waiting tokens with appointment times
+    all_waiting_tokens = Token.objects.filter(
         appointment_time__isnull=False,
         status='waiting'
     )
-
-    print(f"Found {missed_tokens.count()} waiting tokens for today")
     
+    total_count = all_waiting_tokens.count()
+    expired_count = 0
     cancelled_count = 0
-    for token in missed_tokens:
-        appointment_datetime = datetime.combine(today, token.appointment_time)
+    
+    print(f"\n[{now.strftime('%H:%M:%S')}] Checking appointments - Total waiting tokens: {total_count}")
+    
+    for token in all_waiting_tokens:
+        appointment_datetime = datetime.combine(token.date, token.appointment_time)
         appointment_datetime_aware = timezone.make_aware(appointment_datetime, timezone.get_current_timezone())
         cutoff_time = appointment_datetime_aware + grace_period
         
-        print(f"\n[TOKEN {token.id}] Patient: {token.patient.name}")
-        print(f"   Appointment: {token.appointment_time.strftime('%I:%M %p')}")
-        print(f"   Grace ends: {cutoff_time.strftime('%I:%M %p')}")
-        print(f"   Current: {now.strftime('%I:%M %p')}")
-
+        # Check if crossed time limit
         if now > cutoff_time:
-            print(f"   STATUS: MISSED - Cancelling appointment")
-            
+            expired_count += 1
             token.status = 'cancelled'
             token.save()
             cancelled_count += 1
             
-            logger.info(f"Cancelled token {token.id} for patient {token.patient.name}")
-
-            # Send SMS notification
-            if token.patient.phone_number:
-                message = (f"Hi {token.patient.name}, we noticed you missed your appointment slot "
-                           f"at {token.appointment_time.strftime('%I:%M %p')} with Dr. {token.doctor.name}. "
-                           f"Your appointment has been automatically cancelled. Please feel free to book again or contact the clinic.")
-                
-                print(f"   SMS: Sending to {token.patient.phone_number}")
-                print(f"   MSG: {message[:50]}...")
-                
+            print(f"  CANCELLED: {token.patient.name} - {token.date} {token.appointment_time.strftime('%I:%M %p')}")
+            
+            # Send SMS for today's appointments only
+            if token.date == now.date() and token.patient.phone_number:
+                message = f"Hi {token.patient.name}, your appointment at {token.appointment_time.strftime('%I:%M %p')} with Dr. {token.doctor.name} has been cancelled due to no-show."
                 try:
                     async_task('api.tasks.send_cancelled_notification_sms', token.patient.phone_number, message)
-                    print(f"   RESULT: SMS queued successfully")
+                    print(f"  SMS SENT: {token.patient.phone_number}")
                 except Exception as e:
-                    print(f"   ERROR: SMS failed - {e}")
-            else:
-                print(f"   WARNING: No phone number - SMS skipped")
-        else:
-            print(f"   STATUS: OK - Still within grace period")
+                    print(f"  SMS FAILED: {e}")
 
-    print(f"\n[SUMMARY] Cancelled {cancelled_count} appointments")
-    print("="*60 + "\n")
+    print(f"  Expired tokens: {expired_count}, Cancelled: {cancelled_count}")
     
-    result_message = f"Checked for missed slots. Cancelled {cancelled_count} tokens automatically."
+    result_message = f"Total: {total_count}, Expired: {expired_count}, Cancelled: {cancelled_count}"
     logger.info(result_message)
     return result_message
 
 # --- RENAMED & UPDATED: Helper task to send the cancelled notification ---
 def send_cancelled_notification_sms(phone_number, message):
     """ Sends the SMS notification that an appointment was cancelled due to no-show. """
-    print(f"\n[SMS TASK] NOTIFICATION STARTED")
-    print(f"   TO: {phone_number}")
-    print(f"   MESSAGE: {message}")
+    print(f"\n[SMS] Sending cancellation notice to {phone_number}")
     
     try:
         send_sms_notification(phone_number, message)
-        print(f"   SUCCESS: SMS SENT to {phone_number}")
+        print(f"[SMS] SUCCESS - Message sent to {phone_number}")
         logger.info(f"Sent auto-cancellation notification to {phone_number}")
     except Exception as e:
-        print(f"   FAILED: SMS ERROR - {e}")
+        print(f"[SMS] FAILED - {e}")
         logger.error(f"Failed to send auto-cancellation notification to {phone_number}: {e}")
     
-    print(f"   [SMS TASK COMPLETED]\n")
+
 

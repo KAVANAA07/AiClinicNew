@@ -38,11 +38,34 @@ from datetime import datetime, timedelta, time
 from django.utils.crypto import get_random_string
 import threading
 import logging
+import re
 
+# Set up loggers
+logger = logging.getLogger('api.views')
+ivr_logger = logging.getLogger('api.ivr')
 
 User = get_user_model()
 
 # --- Helper Functions ---
+def normalize_phone_number(phone):
+    """Normalize phone number by removing country codes, spaces, and special chars"""
+    if not phone:
+        return phone
+    # Remove all non-digits
+    digits_only = re.sub(r'\D', '', str(phone))
+    if not digits_only:
+        return phone
+    
+    # Remove country codes (91 for India, 1 for US, etc.)
+    if digits_only.startswith('91') and len(digits_only) == 12:
+        return digits_only[2:]
+    elif digits_only.startswith('1') and len(digits_only) == 11:
+        return digits_only[1:]
+    
+    # Return last 10 digits if more than 10
+    if len(digits_only) > 10:
+        return digits_only[-10:]
+    return digits_only
 def haversine_distance(lat1, lon1, lat2, lon2):
     R = 6371.0 # Radius of Earth in kilometers
     lat1_rad, lon1_rad, lat2_rad, lon2_rad = map(radians, [lat1, lon1, lat2, lon2])
@@ -94,39 +117,36 @@ def _get_available_slots_for_doctor(doctor_id, date_str):
 
 # --- Function to find the next earliest available slot across dates ---
 def _find_next_available_slot_for_doctor(doctor_id):
-    """Checks today and future dates for the first available slot."""
+    """Finds the next truly available slot (not expired)."""
     try:
         doctor = Doctor.objects.get(id=doctor_id)
     except Doctor.DoesNotExist:
-        return None, None # Added check
+        return None, None
 
-    # Check today first, starting from the current time
-    today = timezone.now().date()
-    current_date = today
-
-    # Check up to 7 days in the future (arbitrary limit for IVR convenience)
-    for i in range(7):
-        date_str = current_date.strftime('%Y-%m-%d')
+    now = timezone.now()
+    today = now.date()
+    current_time = now.time()
+    
+    # Check up to 30 days in the future
+    for i in range(30):
+        check_date = today + timedelta(days=i)
+        date_str = check_date.strftime('%Y-%m-%d')
         available_slots = _get_available_slots_for_doctor(doctor_id, date_str)
 
         if available_slots:
-            # If today, filter out past slots
-            if current_date == today:
-                now_time = timezone.now().time()
-                # Filter slots that are >= current time
-                current_time_slots = [
+            # If today, only return slots that are in the future
+            if check_date == today:
+                future_slots = [
                     slot for slot in available_slots
-                    if datetime.strptime(slot, '%H:%M').time() >= now_time
+                    if datetime.strptime(slot, '%H:%M').time() > current_time
                 ]
-                if current_time_slots:
-                    return current_date, current_time_slots[0]
+                if future_slots:
+                    return check_date, future_slots[0]
             else:
-                # If future date, return the very first slot
-                return current_date, available_slots[0]
+                # Future date - return first available slot
+                return check_date, available_slots[0]
 
-        current_date += timedelta(days=1)
-
-    return None, None # No slots found in the next 7 days
+    return None, None
 
 # ====================================================================
 # --- START IVR USER CREATION ENHANCEMENT ---
@@ -138,6 +158,8 @@ def _create_ivr_token(doctor, appointment_date, appointment_time_str, caller_pho
     Handles finding/creating patient, checking for existing tokens, AND
     creating a User account if one doesn't exist.
     """
+    ivr_logger.info(f"IVR: Creating token for {caller_phone_number} with Dr. {doctor.name} on {appointment_date} at {appointment_time_str}")
+    
     patient_name = f"IVR Patient {caller_phone_number[-4:]}"
     patient_query = Patient.objects.filter(phone_number=caller_phone_number)
     patient = patient_query.first()
@@ -145,46 +167,90 @@ def _create_ivr_token(doctor, appointment_date, appointment_time_str, caller_pho
     # Find or create the patient
     if not patient:
         patient, _ = Patient.objects.get_or_create(phone_number=caller_phone_number, defaults={'name': patient_name, 'age': 0})
+        ivr_logger.info(f"IVR: Created new patient {patient.id} for {caller_phone_number}")
+    else:
+        ivr_logger.info(f"IVR: Found existing patient {patient.id} for {caller_phone_number}")
 
-    # --- NEW: Check for User account and create if missing ---
+    # --- ENHANCED: Check for User account and create/link appropriately ---
     if patient.user is None:
         try:
-            # Check if a user with this phone number already exists (e.g., from an old, unlinked account)
-            existing_user = User.objects.filter(username=caller_phone_number).first()
-            if existing_user:
-                # Link this existing user to the patient
-                patient.user = existing_user
-                patient.save()
-            else:
-                # No user exists, create one
-                # --- THIS IS THE FIXED LINE ---
-                temp_password = get_random_string(length=8)
-                # --- END OF FIX ---
-                new_user = User.objects.create_user(
-                    username=caller_phone_number, 
-                    password=temp_password,
-                    is_staff=False,
-                    is_superuser=False
-                )
-                patient.user = new_user
-                patient.save()
+            # Normalize phone numbers for comparison
+            normalized_caller = normalize_phone_number(caller_phone_number)
+            
+            # Check if ANY user has a patient with this phone number (sync by phone, not username)
+            existing_patient_with_user = None
+            for patient in Patient.objects.filter(user__isnull=False):
+                if normalize_phone_number(patient.phone_number) == normalized_caller:
+                    existing_patient_with_user = patient
+                    break
+            if existing_patient_with_user:
+                # Found existing patient with user - merge this IVR patient with the web patient
+                web_patient = existing_patient_with_user
+                web_user = web_patient.user
                 
-                # Send the "Welcome" SMS with the temporary password
-                welcome_message = f"Welcome to MedQ! A web account has been created for you. Login using:\nUsername: {caller_phone_number}\nTemp Password: {temp_password}"
+                # Update web patient with any missing info and link this booking
+                patient.user = web_user
+                patient.save()
+                ivr_logger.info(f"IVR: Linked patient {patient.id} to existing web user {web_user.id} by phone number")
+                
+                # Send sync notification
+                sync_message = f"Your IVR booking has been synced with your web account. You can now view this appointment online."
                 try:
-                    send_sms_notification(caller_phone_number, welcome_message)
+                    send_sms_notification(caller_phone_number, sync_message)
+                    ivr_logger.info(f"IVR: Sync SMS sent to {caller_phone_number}")
                 except Exception as e:
-                    print(f"IVR: Failed to send WELCOME SMS to {caller_phone_number}: {e}")
+                    ivr_logger.error(f"IVR: Failed to send SYNC SMS to {caller_phone_number}: {e}")
+            else:
+                # Check if a user with this phone number as username exists
+                existing_user = User.objects.filter(username=caller_phone_number).first()
+                if existing_user:
+                    # User exists from web - link to this patient
+                    patient.user = existing_user
+                    patient.save()
+                    ivr_logger.info(f"IVR: Linked existing web user to patient {patient.id}")
+                    
+                    # Send sync notification
+                    sync_message = f"Your IVR booking has been synced with your web account. You can now view this appointment online."
+                    try:
+                        send_sms_notification(caller_phone_number, sync_message)
+                        ivr_logger.info(f"IVR: Sync SMS sent to {caller_phone_number}")
+                    except Exception as e:
+                        ivr_logger.error(f"IVR: Failed to send SYNC SMS to {caller_phone_number}: {e}")
+                else:
+                    # No web user exists - create new account for IVR user
+                    temp_password = get_random_string(length=8)
+                    new_user = User.objects.create_user(
+                        username=caller_phone_number, 
+                        password=temp_password,
+                        is_staff=False,
+                        is_superuser=False
+                    )
+                    patient.user = new_user
+                    patient.save()
+                    ivr_logger.info(f"IVR: Created new user account for patient {patient.id}")
+                    
+                    # Send welcome SMS with credentials
+                    welcome_message = f"Welcome to MedQ! A web account has been created for you.\nUsername: {caller_phone_number}\nPassword: {temp_password}\nYou can now view your appointments online!"
+                    try:
+                        send_sms_notification(caller_phone_number, welcome_message)
+                        ivr_logger.info(f"IVR: Welcome SMS sent to {caller_phone_number}")
+                    except Exception as e:
+                        ivr_logger.error(f"IVR: Failed to send WELCOME SMS to {caller_phone_number}: {e}")
         
         except Exception as e:
-            print(f"IVR: Failed to create/link user for patient {patient.id}: {e}")
+            ivr_logger.error(f"IVR: Failed to create/link user for patient {patient.id}: {e}")
             # Continue with booking, but user won't be able to log in
-    # --- END NEW USER CREATION ---
+    else:
+        # Patient already has a user account - this is a returning user
+        ivr_logger.info(f"IVR: Patient {patient.id} already has linked user account {patient.user.id}")
+    # --- END ENHANCED USER CREATION ---
 
 
     # Check for existing active token on ANY day
-    if Token.objects.filter(patient=patient).exclude(status__in=['completed', 'cancelled', 'skipped']).exists():
-        print(f"IVR Booking failed: Patient {patient.id} already has an active token.")
+    existing_active_tokens = Token.objects.filter(patient=patient).exclude(status__in=['completed', 'cancelled', 'skipped'])
+    if existing_active_tokens.exists():
+        existing_token = existing_active_tokens.first()
+        ivr_logger.warning(f"IVR Booking failed: Patient {patient.id} already has active token {existing_token.id} on {existing_token.date} at {existing_token.appointment_time} (status: {existing_token.status})")
         return None # Indicate failure: existing token
 
     try:
@@ -201,22 +267,29 @@ def _create_ivr_token(doctor, appointment_date, appointment_time_str, caller_pho
         formatted_token_number = f"{doctor_initial}-{slot_number}"
 
         with transaction.atomic():
-            # Final check if slot is still free right before creating
-            if Token.objects.filter(doctor=doctor, date=appointment_date, appointment_time=appointment_time).exclude(status__in=['cancelled', 'skipped']).exists():
-                print(f"IVR Booking failed: Slot {appointment_date} {appointment_time_str} for Dr. {doctor.id} was taken.")
+            # Final check if slot is still free right before creating (race condition protection)
+            existing_token = Token.objects.filter(
+                doctor=doctor, 
+                date=appointment_date, 
+                appointment_time=appointment_time
+            ).exclude(status__in=['cancelled', 'skipped']).first()
+            
+            if existing_token:
+                ivr_logger.warning(f"IVR Booking failed: Slot {appointment_date} {appointment_time_str} for Dr. {doctor.id} already taken by token {existing_token.id}")
                 return None # Indicate failure: slot taken
 
             new_appointment = Token.objects.create(
                 patient=patient, doctor=doctor, clinic=doctor.clinic, date=appointment_date,
                 appointment_time=appointment_time, token_number=formatted_token_number, status='waiting'
             )
+            ivr_logger.info(f"IVR: Successfully created token {new_appointment.id} for patient {patient.id}")
             return new_appointment # Indicate success
 
-    except IntegrityError:
-        print(f"IVR Booking failed: Database integrity error for slot {appointment_date} {appointment_time_str} Dr. {doctor.id}.")
+    except IntegrityError as e:
+        ivr_logger.error(f"IVR Booking failed: Database integrity error for slot {appointment_date} {appointment_time_str} Dr. {doctor.id}: {e}")
         return None # Indicate failure: database conflict
     except Exception as e:
-        print(f"IVR Booking failed: Unexpected error during token creation - {e}")
+        ivr_logger.error(f"IVR Booking failed: Unexpected error during token creation - {e}")
         return None # Indicate general failure
 
 # ====================================================================
@@ -277,6 +350,36 @@ class PatientRegisterView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request, *args, **kwargs):
+        phone_number = request.data.get('phone_number')
+        
+        # Check if patient already exists from IVR booking (sync by phone number)
+        if phone_number:
+            # Normalize phone number for comparison
+            normalized_phone = normalize_phone_number(phone_number)
+            
+            # Check for any patient with this phone number (with or without user)
+            existing_patients = []
+            for patient in Patient.objects.all():
+                if normalize_phone_number(patient.phone_number) == normalized_phone:
+                    existing_patients.append(patient)
+            if existing_patients:
+                # Check if any of these patients already have a user account
+                patient_with_user = next((p for p in existing_patients if p.user is not None), None)
+                if patient_with_user:
+                    return Response({
+                        'error': 'phone_already_registered',
+                        'message': 'This phone number is already registered. Please use a different phone number or log in with existing credentials.'
+                    }, status=status.HTTP_409_CONFLICT)
+                
+                # Found IVR-only patients - offer to link
+                ivr_patient = next((p for p in existing_patients if p.user is None), None)
+                if ivr_patient:
+                    return Response({
+                        'error': 'ivr_account_exists',
+                        'message': 'We found that you have booked appointments via phone. Would you like to link your existing bookings to this web account?',
+                        'phone_number': phone_number
+                    }, status=status.HTTP_409_CONFLICT)
+        
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
@@ -302,6 +405,73 @@ class PatientRegisterView(generics.CreateAPIView):
             return Response(user_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class LinkIVRAccountView(APIView):
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request, *args, **kwargs):
+        phone_number = request.data.get('phone_number')
+        name = request.data.get('name')
+        age = request.data.get('age')
+        password = request.data.get('password')
+        
+        if not all([phone_number, name, age, password]):
+            return Response({'error': 'All fields are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Find all IVR patients with this phone number
+            existing_patients = Patient.objects.filter(phone_number=phone_number, user__isnull=True)
+            if not existing_patients.exists():
+                raise Patient.DoesNotExist
+            
+            # Create new user account
+            user = User.objects.create_user(
+                username=phone_number,
+                password=password,
+                is_staff=False,
+                is_superuser=False
+            )
+            
+            # Link all existing patients to new user and update the primary one
+            primary_patient = existing_patients.first()
+            primary_patient.user = user
+            primary_patient.name = name  # Update name from web registration
+            primary_patient.age = int(age)  # Update age from web registration
+            primary_patient.save()
+            
+            # Link any additional patients with same phone number
+            for patient in existing_patients.exclude(id=primary_patient.id):
+                patient.user = user
+                patient.save()
+            
+            # Create auth token
+            token, _ = AuthToken.objects.get_or_create(user=user)
+            
+            # Send confirmation SMS
+            message = f"Great! Your web account has been linked to your existing appointments. You can now view all your bookings online."
+            try:
+                send_sms_notification(phone_number, message)
+            except Exception as e:
+                print(f"Failed to send linking SMS: {e}")
+            
+            # Return user data
+            profile = {
+                'id': user.id,
+                'username': user.username,
+                'name': existing_patient.name,
+                'age': existing_patient.age,
+                'phone_number': existing_patient.phone_number,
+                'role': 'patient'
+            }
+            user_data = {'token': token.key, 'user': profile}
+            return Response(user_data, status=status.HTTP_201_CREATED)
+            
+        except Patient.DoesNotExist:
+            return Response({'error': 'No IVR bookings found for this phone number.'}, status=status.HTTP_404_NOT_FOUND)
+        except IntegrityError:
+            return Response({'error': 'An account with this phone number already exists.'}, status=status.HTTP_409_CONFLICT)
+        except Exception as e:
+            return Response({'error': f'Failed to link account: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class ConfirmArrivalView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request, *args, **kwargs):
@@ -313,7 +483,21 @@ class ConfirmArrivalView(APIView):
             return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            token = Token.objects.get(patient=user.patient, date=timezone.now().date(), status='waiting')
+            # Find tokens by normalized phone number
+            user_phone_normalized = normalize_phone_number(user.patient.phone_number)
+            matching_patients = []
+            for patient in Patient.objects.all():
+                if normalize_phone_number(patient.phone_number) == user_phone_normalized:
+                    matching_patients.append(patient.id)
+            
+            token = Token.objects.filter(
+                patient_id__in=matching_patients, 
+                date=timezone.now().date(), 
+                status='waiting'
+            ).first()
+            
+            if not token:
+                raise Token.DoesNotExist
 
             if token.appointment_time:
                 now = timezone.now()
@@ -355,8 +539,15 @@ class PatientCancelTokenView(APIView):
 
         today = timezone.now().date()
         try:
+            # Find tokens by normalized phone number
+            user_phone_normalized = normalize_phone_number(user.patient.phone_number)
+            matching_patients = []
+            for patient in Patient.objects.all():
+                if normalize_phone_number(patient.phone_number) == user_phone_normalized:
+                    matching_patients.append(patient.id)
+            
             token = Token.objects.filter(
-                patient=user.patient,
+                patient_id__in=matching_patients,
                 date__gte=today,
                 status__in=['waiting', 'confirmed']
             ).order_by('date', 'appointment_time').first()
@@ -379,16 +570,25 @@ class GetPatientTokenView(APIView):
             return Response({'error': 'No patient profile found.'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             today = timezone.now().date()
+            user_phone_normalized = normalize_phone_number(user.patient.phone_number)
 
+            # Find tokens by normalized phone number (not just patient ID)
+            matching_patients = []
+            for patient in Patient.objects.all():
+                if normalize_phone_number(patient.phone_number) == user_phone_normalized:
+                    matching_patients.append(patient.id)
+
+            # Get today's token first, then future tokens
             token = Token.objects.filter(
-                patient=user.patient,
+                patient_id__in=matching_patients,
                 date=today
             ).exclude(status__in=['completed', 'cancelled']).order_by('appointment_time', 'created_at').first()
 
             if not token:
+                # Get next upcoming token (including future dates)
                 token = Token.objects.filter(
-                    patient=user.patient,
-                    date__gt=today,
+                    patient_id__in=matching_patients,
+                    date__gte=today,
                     status__in=['waiting', 'confirmed']
                 ).order_by('date', 'appointment_time', 'created_at').first()
 
@@ -600,9 +800,14 @@ class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
     def post(self, request, format=None):
         username, password = request.data.get('username'), request.data.get('password')
+        logger.info(f"Login attempt for username: {username}")
+        
         user = authenticate(request, username=username, password=password)
         if user is not None:
+            logger.info(f"Authentication successful for user: {username}")
+            
             if not user.is_active:
+                logger.warning(f"Login failed - inactive account: {username}")
                 # If user has a patient profile, give a clearer message for patients
                 if hasattr(user, 'patient'):
                     return Response({'error': 'Account not verified. Please contact support.'}, status=status.HTTP_401_UNAUTHORIZED)
@@ -633,6 +838,7 @@ class LoginView(APIView):
                     if user.receptionist.clinic:
                         clinic_data = {'id': user.receptionist.clinic.id, 'name': user.receptionist.clinic.name}
 
+                logger.info(f"Staff login successful - Role: {role}, User: {username}")
                 response_data = {'token': token.key, 'user': {**profile_data, 'role': role, 'clinic': clinic_data}}
                 return Response(response_data, status=status.HTTP_200_OK)
 
@@ -648,9 +854,11 @@ class LoginView(APIView):
                     'phone_number': patient.phone_number,
                     'role': 'patient'
                 }
+                logger.info(f"Patient login successful - User: {username}, Patient: {patient.name}")
                 user_data = {'token': token.key, 'user': profile_data}
                 return Response(user_data, status=status.HTTP_200_OK)
 
+        logger.warning(f"Login failed - invalid credentials for username: {username}")
         return Response({'error': 'Invalid Credentials.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class StaffLoginView(APIView):
@@ -658,8 +866,11 @@ class StaffLoginView(APIView):
     def post(self, request, *args, **kwargs):
         username = request.data.get('username')
         password = request.data.get('password')
+        logger.info(f"Staff login attempt for username: {username}")
+        
         user = authenticate(username=username, password=password)
         if user is not None and user.is_staff:
+            logger.info(f"Staff authentication successful for user: {username}")
             token, created = AuthToken.objects.get_or_create(user=user)
             # Build a consistent user payload for the frontend
             role = 'unknown'
@@ -686,8 +897,11 @@ class StaffLoginView(APIView):
                 if user.is_staff:
                     role = 'staff'
 
+            logger.info(f"Staff login successful - Role: {role}, User: {username}")
             response_data = {'token': token.key, 'user': {**profile_data, 'role': role, 'clinic': clinic_data}}
             return Response(response_data, status=status.HTTP_200_OK)
+        
+        logger.warning(f"Staff login failed - invalid credentials or not staff: {username}")
         return Response({'error': 'Invalid Credentials or not a staff member.'}, status=status.HTTP_400_BAD_REQUEST)
 
 class MyHistoryView(generics.ListAPIView):
@@ -703,7 +917,22 @@ class PatientHistoryView(generics.ListAPIView):
     serializer_class = ConsultationSerializer
     def get_queryset(self):
         patient_id = self.kwargs.get('patient_id')
-        if patient_id: return Consultation.objects.filter(patient__id=patient_id).order_by('-date')
+        if patient_id:
+            # Get the patient and find all patients with same normalized phone number
+            try:
+                patient = Patient.objects.get(id=patient_id)
+                normalized_phone = normalize_phone_number(patient.phone_number)
+                
+                # Find all patients with same phone number (IVR + web accounts)
+                matching_patients = []
+                for p in Patient.objects.all():
+                    if normalize_phone_number(p.phone_number) == normalized_phone:
+                        matching_patients.append(p.id)
+                
+                # Return consultations from ALL matching patients
+                return Consultation.objects.filter(patient_id__in=matching_patients).order_by('-date')
+            except Patient.DoesNotExist:
+                return Consultation.objects.none()
         return Consultation.objects.none()
 
 # ====================================================================
@@ -713,28 +942,94 @@ class PatientHistorySearchView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        # Restrict to Doctors/Staff only
-        if not (hasattr(request.user, 'doctor') or hasattr(request.user, 'receptionist') or request.user.is_staff):
-            return Response({'error': 'Permission denied. Staff access required.'}, status=status.HTTP_403_FORBIDDEN)
-
         phone_number = request.query_params.get('phone')
         if not phone_number:
             return Response({'error': 'Phone number parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Find the patient by phone number
-            patient = Patient.objects.get(phone_number=phone_number)
+            # Normalize phone number
+            normalized_phone = normalize_phone_number(phone_number)
+            matching_patients = []
             
-            # --- CHANGED HERE: Fetch Consultations instead of Tokens ---
-            consultations = Consultation.objects.filter(patient=patient).order_by('-date')
+            # Find all patients with matching normalized phone
+            for patient in Patient.objects.all():
+                if normalize_phone_number(patient.phone_number) == normalized_phone:
+                    matching_patients.append(patient.id)
             
-            # --- CHANGED HERE: Use ConsultationSerializer ---
+            if not matching_patients:
+                return Response({
+                    'error': 'Patient not found with this phone number.',
+                    'searched_phone': phone_number,
+                    'normalized_phone': normalized_phone
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # DOCTOR RESTRICTION: Only allow doctors to search patients they have consulted before
+            if hasattr(request.user, 'doctor'):
+                doctor = request.user.doctor
+                # Check if this doctor has ever consulted any of these patients
+                doctor_consultations = Consultation.objects.filter(
+                    doctor=doctor,
+                    patient_id__in=matching_patients
+                )
+                
+                if not doctor_consultations.exists():
+                    return Response({
+                        'error': 'Access denied. You can only search history of patients you have previously consulted.',
+                        'searched_phone': phone_number
+                    }, status=status.HTTP_403_FORBIDDEN)
+                
+                # Return only consultations by this doctor for these patients
+                consultations = doctor_consultations.order_by('-date')
+            else:
+                # Non-doctors (receptionists, admin) can see all consultations
+                consultations = Consultation.objects.filter(
+                    patient_id__in=matching_patients
+                ).order_by('-date')
+            
+            # Get patient info
+            primary_patient = Patient.objects.get(id=matching_patients[0])
             serializer = ConsultationSerializer(consultations, many=True)
             
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            # Debug: Log the response data
+            consultation_data = serializer.data
+            print(f"DEBUG: Returning {len(consultation_data)} consultations for phone {phone_number}")
+            
+            return Response({
+                'success': True,
+                'consultations': consultation_data,
+                'patient_info': {
+                    'name': primary_patient.name,
+                    'phone_number': primary_patient.phone_number,
+                    'age': primary_patient.age
+                },
+                'total_patients_found': len(matching_patients),
+                'total_consultations': consultations.count(),
+                'message': f'Found {consultations.count()} consultations for {primary_patient.name}'
+            }, status=status.HTTP_200_OK)
 
-        except Patient.DoesNotExist:
-            return Response({'error': 'Patient not found with this phone number.'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def post(self, request, *args, **kwargs):
+        """Simple test endpoint to verify API is working"""
+        return Response({
+            'success': True,
+            'message': 'Patient history search API is working',
+            'test_consultations': [
+                {
+                    'id': 1,
+                    'date': '2025-11-23',
+                    'notes': 'Test consultation notes',
+                    'doctor': {'name': 'Test Doctor'}
+                }
+            ],
+            'patient_info': {
+                'name': 'Test Patient',
+                'phone_number': '+1234567890',
+                'age': 30
+            },
+            'total_consultations': 1
+        }, status=status.HTTP_200_OK)
 
 
 class PatientLiveQueueView(generics.ListAPIView):
@@ -840,9 +1135,11 @@ class TokenUpdateStatusView(generics.UpdateAPIView):
 @csrf_exempt
 def ivr_welcome(request):
     try:
+        ivr_logger.info(f"IVR Welcome called - Method: {request.method}, From: {request.POST.get('From', 'Unknown')}")
         response = VoiceResponse()
         states = State.objects.all()
         if not states:
+            ivr_logger.warning("IVR Welcome: No states configured")
             response.say("Sorry, no clinics are configured. Goodbye.")
             response.hangup()
             return HttpResponse(str(response), content_type='text/xml')
@@ -853,9 +1150,10 @@ def ivr_welcome(request):
             say_message += f"For {state.name}, press {i + 1}. "
         gather.say(say_message)
         response.redirect('/api/ivr/welcome/')
+        ivr_logger.info(f"IVR Welcome: Generated response with {states.count()} states")
         return HttpResponse(str(response), content_type='text/xml')
     except Exception as e:
-        print(f"IVR Welcome Error: {e}")
+        ivr_logger.error(f"IVR Welcome Error: {e}")
         response = VoiceResponse()
         response.say("Sorry, there was a system error. Please try again later.")
         response.hangup()
@@ -863,15 +1161,34 @@ def ivr_welcome(request):
 
 @csrf_exempt
 def ivr_handle_state(request):
-    choice = request.POST.get('Digits'); response = VoiceResponse()
+    choice = request.POST.get('Digits')
+    caller = request.POST.get('From', 'Unknown')
+    ivr_logger.info(f"IVR Handle State - From: {caller}, Choice: {choice}")
+    
+    response = VoiceResponse()
     try:
-        state = State.objects.all()[int(choice) - 1]; districts = District.objects.filter(state=state)
-        if not districts: response.say(f"Sorry, no districts found for {state.name}. Please try again."); response.redirect('/api/ivr/welcome/'); return HttpResponse(str(response), content_type='text/xml')
-        num_digits = len(str(districts.count())) if districts.count() > 0 else 1; gather = response.gather(num_digits=num_digits, action=f'/api/ivr/handle-district/{state.id}/')
-        say_message = f"You selected {state.name}. Please select a district. ";
-        for i, district in enumerate(districts): say_message += f"For {district.name}, press {i + 1}. "
-        gather.say(say_message); response.redirect('/api/ivr/handle-state/');
-    except (ValueError, IndexError, TypeError): response.say("Invalid choice."); response.redirect('/api/ivr/welcome/')
+        state = State.objects.all()[int(choice) - 1]
+        districts = District.objects.filter(state=state)
+        ivr_logger.info(f"IVR: Selected state {state.name}, found {districts.count()} districts")
+        
+        if not districts:
+            ivr_logger.warning(f"IVR: No districts found for state {state.name}")
+            response.say(f"Sorry, no districts found for {state.name}. Please try again.")
+            response.redirect('/api/ivr/welcome/')
+            return HttpResponse(str(response), content_type='text/xml')
+            
+        num_digits = len(str(districts.count())) if districts.count() > 0 else 1
+        gather = response.gather(num_digits=num_digits, action=f'/api/ivr/handle-district/{state.id}/')
+        say_message = f"You selected {state.name}. Please select a district. "
+        for i, district in enumerate(districts):
+            say_message += f"For {district.name}, press {i + 1}. "
+        gather.say(say_message)
+        response.redirect('/api/ivr/handle-state/')
+        
+    except (ValueError, IndexError, TypeError) as e:
+        ivr_logger.error(f"IVR Handle State Error: {e}, Choice: {choice}")
+        response.say("Invalid choice.")
+        response.redirect('/api/ivr/welcome/')
     return HttpResponse(str(response), content_type='text/xml')
 
 @csrf_exempt
@@ -889,52 +1206,82 @@ def ivr_handle_district(request, state_id):
 
 @csrf_exempt
 def ivr_handle_clinic(request, district_id):
-    choice = request.POST.get('Digits'); response = VoiceResponse()
+    choice = request.POST.get('Digits')
+    caller = request.POST.get('From', 'Unknown')
+    ivr_logger.info(f"IVR Handle Clinic - From: {caller}, Choice: {choice}")
+    
+    response = VoiceResponse()
     try:
-        district = District.objects.get(id=district_id); clinic = Clinic.objects.filter(district=district)[int(choice) - 1]
+        district = District.objects.get(id=district_id)
+        clinic = Clinic.objects.filter(district=district)[int(choice) - 1]
+        ivr_logger.info(f"IVR: Selected clinic {clinic.name}")
+        
         gather = response.gather(num_digits=1, action=f'/api/ivr/handle-booking-type/{clinic.id}/')
-        gather.say(f"You selected {clinic.name}. For the next available doctor, press 1. To find a doctor by specialization, press 2.")
-        response.redirect(f'/api/ivr/handle-clinic/{district.id}/');
-    except (ValueError, IndexError, TypeError, District.DoesNotExist, Clinic.DoesNotExist): response.say("Invalid choice or error."); response.redirect('/api/ivr/welcome/')
+        gather.say(f"You selected {clinic.name}. Press 1 for next available appointment. Press 2 to book for particular date.")
+        response.redirect(f'/api/ivr/handle-clinic/{district.id}/')
+        
+    except (ValueError, IndexError, TypeError, District.DoesNotExist, Clinic.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Handle Clinic Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect('/api/ivr/welcome/')
     return HttpResponse(str(response), content_type='text/xml')
 
 # --- MODIFIED: Asks for confirmation ---
 @csrf_exempt
 def ivr_handle_booking_type(request, clinic_id):
-    choice = request.POST.get('Digits'); response = VoiceResponse(); caller_phone_number = request.POST.get('From', None)
-    if not caller_phone_number: response.say("We could not identify your phone number. Cannot proceed. Goodbye."); response.hangup(); return HttpResponse(str(response), content_type='text/xml')
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None)
+    ivr_logger.info(f"IVR Booking Type - From: {caller_phone_number}, Choice: {choice}")
+    
+    response = VoiceResponse()
+    
+    if not caller_phone_number:
+        response.say("We could not identify your phone number. Cannot proceed. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
     try:
         clinic = Clinic.objects.get(id=clinic_id)
-        if choice == '1': # Book with next available
-            doctors = Doctor.objects.filter(clinic=clinic)
-            if not doctors.exists(): response.say(f"Sorry, no doctors found for {clinic.name}."); response.hangup(); return HttpResponse(str(response), content_type='text/xml')
-            best_doctor = None; earliest_appointment_date = None; earliest_slot_str = None
-            for doctor in doctors: # Find absolute earliest slot
-                app_date, slot_str = _find_next_available_slot_for_doctor(doctor.id)
-                if app_date and slot_str:
-                    slot_datetime = datetime.combine(app_date, datetime.strptime(slot_str, '%H:%M').time()); current_earliest_datetime = datetime.combine(earliest_appointment_date, datetime.strptime(earliest_slot_str, '%H:%M').time()) if earliest_appointment_date else None
-                    if current_earliest_datetime is None or slot_datetime < current_earliest_datetime: earliest_appointment_date = app_date; earliest_slot_str = slot_str; best_doctor = doctor
-            if best_doctor:
-                # --- ASK FOR CONFIRMATION ---
-                date_spoken = "today" if earliest_appointment_date == timezone.now().date() else earliest_appointment_date.strftime("%B %d")
-                time_spoken = datetime.strptime(earliest_slot_str, '%H:%M').strftime('%I:%M %p')
-                action_url = f'/api/ivr/confirm-booking/?doctor_id={best_doctor.id}&date={earliest_appointment_date.strftime("%Y-%m-%d")}&time={earliest_slot_str}&phone={caller_phone_number}'
-                gather = response.gather(num_digits=1, action=action_url)
-                gather.say(f"The next available slot is with Doctor {best_doctor.name} at {time_spoken} on {date_spoken}. Press 1 to confirm, press 2 to cancel.")
-                response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/') # Redirect if no input
-                # --- END ASK FOR CONFIRMATION ---
-            else:
-                response.say(f"Sorry, no doctors have available slots in the coming days at {clinic.name}. Goodbye."); response.hangup()
-        elif choice == '2': # Find by specialization
+        
+        if choice == '1':  # Next available appointment - ask specialization first
             specializations = list(Doctor.objects.filter(clinic=clinic).values_list('specialization', flat=True).distinct())
-            if not specializations: response.say(f"Sorry, no specializations found for {clinic.name}."); response.redirect(f'/api/ivr/handle-clinic/{clinic.district_id}/'); return HttpResponse(str(response), content_type='text/xml')
-            num_digits = len(str(len(specializations))) if specializations else 1; gather = response.gather(num_digits=num_digits, action=f'/api/ivr/handle-specialization/{clinic.id}/')
-            say_message = "Please select a specialization. ";
-            for i, spec in enumerate(specializations): say_message += f"For {spec}, press {i + 1}. "
-            gather.say(say_message); response.redirect(f'/api/ivr/handle-booking-type/{clinic.id}/');
-        else: response.say("Invalid choice."); response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
-    except Clinic.DoesNotExist: response.say("Clinic not found."); response.redirect('/api/ivr/welcome/')
-    except Exception as e: print(f"Error in ivr_handle_booking_type: {e}"); response.say("An application error occurred. Goodbye."); response.hangup()
+            if not specializations:
+                response.say(f"Sorry, no specializations available at {clinic.name}.")
+                response.redirect(f'/api/ivr/handle-clinic/{clinic.district_id}/')
+                return HttpResponse(str(response), content_type='text/xml')
+            
+            gather = response.gather(num_digits=1, action=f'/api/ivr/handle-next-available-spec/{clinic.id}/?phone={caller_phone_number}')
+            say_message = "Please select a specialization. "
+            for i, spec in enumerate(specializations):
+                say_message += f"For {spec}, press {i + 1}. "
+            gather.say(say_message)
+            response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+                
+        elif choice == '2':  # Book for particular date - ask specialization first
+            specializations = list(Doctor.objects.filter(clinic=clinic).values_list('specialization', flat=True).distinct())
+            if not specializations:
+                response.say(f"Sorry, no specializations available at {clinic.name}.")
+                response.redirect(f'/api/ivr/handle-clinic/{clinic.district_id}/')
+                return HttpResponse(str(response), content_type='text/xml')
+            
+            gather = response.gather(num_digits=1, action=f'/api/ivr/handle-date-specialization/{clinic.id}/?phone={caller_phone_number}')
+            say_message = "Please select a specialization. "
+            for i, spec in enumerate(specializations):
+                say_message += f"For {spec}, press {i + 1}. "
+            gather.say(say_message)
+            response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+        else:
+            response.say("Invalid choice. Please try again.")
+            response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+            
+    except Clinic.DoesNotExist:
+        response.say("Clinic not found.")
+        response.redirect('/api/ivr/welcome/')
+    except Exception as e:
+        ivr_logger.error(f"IVR: Error in booking type: {e}")
+        response.say("An application error occurred. Goodbye.")
+        response.hangup()
+    
     return HttpResponse(str(response), content_type='text/xml')
 
 # --- MODIFIED: Finds slot and asks for confirmation ---
@@ -951,6 +1298,324 @@ def ivr_handle_specialization(request, clinic_id):
         gather.say(say_message); response.redirect(f'/api/ivr/handle-specialization/{clinic.id}/');
     except (ValueError, IndexError, TypeError, Clinic.DoesNotExist): response.say("Invalid choice or error."); response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
     except Exception as e: print(f"Error in ivr_handle_specialization: {e}"); response.say("An application error occurred."); response.hangup()
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle next available appointment with specialization ---
+@csrf_exempt
+def ivr_handle_next_available_spec(request, clinic_id):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    ivr_logger.info(f"IVR Next Available Spec - From: {caller_phone_number}, Choice: {choice}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        clinic = Clinic.objects.get(id=clinic_id)
+        specializations = list(Doctor.objects.filter(clinic=clinic).values_list('specialization', flat=True).distinct())
+        spec = specializations[int(choice) - 1]
+        
+        # Find next available doctor in this specialization
+        doctors = Doctor.objects.filter(clinic=clinic, specialization=spec)
+        best_doctor = None
+        earliest_date = None
+        earliest_slot = None
+        
+        for doctor in doctors:
+            app_date, slot_str = _find_next_available_slot_for_doctor(doctor.id)
+            if app_date and slot_str:
+                if earliest_date is None or app_date < earliest_date:
+                    earliest_date = app_date
+                    earliest_slot = slot_str
+                    best_doctor = doctor
+        
+        if best_doctor:
+            today = timezone.now().date()
+            if earliest_date == today:
+                date_spoken = "today"
+            elif earliest_date == today + timedelta(days=1):
+                date_spoken = "tomorrow"
+            else:
+                date_spoken = earliest_date.strftime("%B %d")
+            
+            time_spoken = datetime.strptime(earliest_slot, '%H:%M').strftime('%I:%M %p')
+            action_url = f'/api/ivr/confirm-booking/?doctor_id={best_doctor.id}&date={earliest_date.strftime("%Y-%m-%d")}&time={earliest_slot}&phone={caller_phone_number}'
+            gather = response.gather(num_digits=1, action=action_url)
+            gather.say(f"Next available appointment for {spec} is with Doctor {best_doctor.name} on {date_spoken} at {time_spoken}. Press 1 to confirm, press 2 to cancel.")
+            response.redirect(f'/api/ivr/handle-next-available-spec/{clinic_id}/?phone={caller_phone_number}')
+        else:
+            response.say(f"Sorry, no appointments available for {spec} in the next 30 days. Please try another specialization.")
+            response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+            
+    except (ValueError, IndexError, TypeError, Clinic.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Next Available Spec Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle date-based specialization selection ---
+@csrf_exempt
+def ivr_handle_date_specialization(request, clinic_id):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    ivr_logger.info(f"IVR Date Specialization - From: {caller_phone_number}, Choice: {choice}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        clinic = Clinic.objects.get(id=clinic_id)
+        specializations = list(Doctor.objects.filter(clinic=clinic).values_list('specialization', flat=True).distinct())
+        spec = specializations[int(choice) - 1]
+        
+        gather = response.gather(num_digits=1, action=f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+        gather.say(f"You selected {spec}. Press 1 for next available doctor, or press 2 to choose specific doctor.")
+        response.redirect(f'/api/ivr/handle-date-specialization/{clinic_id}/?phone={caller_phone_number}')
+        
+    except (ValueError, IndexError, TypeError, Clinic.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Date Specialization Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle doctor choice after specialization ---
+@csrf_exempt
+def ivr_handle_date_doctor_choice(request, clinic_id, spec):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    ivr_logger.info(f"IVR Date Doctor Choice - From: {caller_phone_number}, Choice: {choice}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        clinic = Clinic.objects.get(id=clinic_id)
+        doctors = Doctor.objects.filter(clinic=clinic, specialization=spec)
+        
+        if choice == '1':  # Next available doctor for selected date
+            gather = response.gather(num_digits=2, action=f'/api/ivr/handle-date-input/{clinic_id}/{spec}/?phone={caller_phone_number}&type=next')
+            gather.say("Please enter the date you prefer. Enter day of month as 2 digits. For example, press 0 5 for 5th, or 1 5 for 15th.")
+            response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+                
+        elif choice == '2':  # Choose specific doctor for selected date
+            gather = response.gather(num_digits=2, action=f'/api/ivr/handle-date-input/{clinic_id}/{spec}/?phone={caller_phone_number}&type=specific')
+            gather.say("Please enter the date you prefer. Enter day of month as 2 digits. For example, press 0 5 for 5th, or 1 5 for 15th.")
+            response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+        else:
+            response.say("Invalid choice. Please try again.")
+            response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+            
+    except (ValueError, IndexError, TypeError, Clinic.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Date Doctor Choice Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle date input ---
+@csrf_exempt
+def ivr_handle_date_input(request, clinic_id, spec):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    booking_type = request.GET.get('type', 'next')  # 'next' or 'specific'
+    ivr_logger.info(f"IVR Date Input - From: {caller_phone_number}, Choice: {choice}, Type: {booking_type}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        # Parse the day input
+        day = int(choice)
+        if day < 1 or day > 31:
+            raise ValueError("Invalid day")
+        
+        # Calculate the target date (current month)
+        today = timezone.now().date()
+        current_month = today.month
+        current_year = today.year
+        
+        # If the day is in the past this month, use next month
+        if day < today.day:
+            if current_month == 12:
+                target_date = today.replace(year=current_year + 1, month=1, day=day)
+            else:
+                target_date = today.replace(month=current_month + 1, day=day)
+        else:
+            target_date = today.replace(day=day)
+        
+        clinic = Clinic.objects.get(id=clinic_id)
+        doctors = Doctor.objects.filter(clinic=clinic, specialization=spec)
+        
+        if booking_type == 'next':  # Next available doctor for this date
+            best_doctor = None
+            best_slot = None
+            
+            for doctor in doctors:
+                # Get fresh available slots (checks for bookings in real-time)
+                available_slots = _get_available_slots_for_doctor(doctor.id, target_date.strftime('%Y-%m-%d'))
+                if available_slots:
+                    # Filter out past slots if it's today
+                    if target_date == today:
+                        # Get current time in local timezone
+                        now_local = timezone.localtime(timezone.now())
+                        current_time = now_local.time()
+                        future_slots = [
+                            slot for slot in available_slots
+                            if datetime.strptime(slot, '%H:%M').time() > current_time
+                        ]
+                        if future_slots:
+                            best_doctor = doctor
+                            best_slot = future_slots[0]
+                            ivr_logger.info(f"IVR: Found available slot {best_slot} with Dr. {doctor.name} on {target_date}")
+                            break
+                    else:
+                        best_doctor = doctor
+                        best_slot = available_slots[0]
+                        ivr_logger.info(f"IVR: Found available slot {best_slot} with Dr. {doctor.name} on {target_date}")
+                        break
+            
+            if best_doctor and best_slot:
+                date_spoken = "today" if target_date == today else target_date.strftime("%B %d")
+                time_spoken = datetime.strptime(best_slot, '%H:%M').strftime('%I:%M %p')
+                action_url = f'/api/ivr/confirm-booking/?doctor_id={best_doctor.id}&date={target_date.strftime("%Y-%m-%d")}&time={best_slot}&phone={caller_phone_number}'
+                gather = response.gather(num_digits=1, action=action_url)
+                gather.say(f"Available appointment on {date_spoken} at {time_spoken} with Doctor {best_doctor.name}. Press 1 to confirm, press 2 to cancel.")
+                response.redirect(f'/api/ivr/handle-date-input/{clinic_id}/{spec}/?phone={caller_phone_number}&type=next')
+            else:
+                response.say(f"Sorry, no appointments available on {target_date.strftime('%B %d')} for {spec}. Please try another date.")
+                response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+                
+        else:  # Specific doctor selection for this date
+            if not doctors.exists():
+                response.say(f"Sorry, no doctors found for {spec}.")
+                response.redirect(f'/api/ivr/handle-booking-type/{clinic_id}/')
+                return HttpResponse(str(response), content_type='text/xml')
+            
+            gather = response.gather(num_digits=1, action=f'/api/ivr/handle-specific-doctor-date/{clinic_id}/{spec}/{target_date.strftime("%Y-%m-%d")}/?phone={caller_phone_number}')
+            say_message = f"Please select a doctor for {target_date.strftime('%B %d')}. "
+            for i, doctor in enumerate(doctors):
+                say_message += f"For Doctor {doctor.name}, press {i + 1}. "
+            gather.say(say_message)
+            response.redirect(f'/api/ivr/handle-date-input/{clinic_id}/{spec}/?phone={caller_phone_number}&type=specific')
+            
+    except (ValueError, Clinic.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Date Input Error: {e}")
+        response.say("Invalid date. Please try again.")
+        response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle specific doctor with date ---
+@csrf_exempt
+def ivr_handle_specific_doctor_date(request, clinic_id, spec, date_str):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    ivr_logger.info(f"IVR Specific Doctor Date - From: {caller_phone_number}, Choice: {choice}, Date: {date_str}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        clinic = Clinic.objects.get(id=clinic_id)
+        doctor = Doctor.objects.filter(clinic=clinic, specialization=spec)[int(choice) - 1]
+        target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        
+        # Get fresh available slots (real-time check)
+        available_slots = _get_available_slots_for_doctor(doctor.id, date_str)
+        ivr_logger.info(f"IVR: Available slots for Dr. {doctor.name} on {date_str}: {available_slots}")
+        
+        if available_slots:
+            # Filter out past slots if it's today
+            if target_date == timezone.now().date():
+                # Get current time in local timezone
+                now_local = timezone.localtime(timezone.now())
+                current_time = now_local.time()
+                future_slots = [
+                    slot for slot in available_slots
+                    if datetime.strptime(slot, '%H:%M').time() > current_time
+                ]
+                if future_slots:
+                    best_slot = future_slots[0]
+                    ivr_logger.info(f"IVR: Selected future slot {best_slot} for Dr. {doctor.name}")
+                else:
+                    ivr_logger.warning(f"IVR: No future slots available today for Dr. {doctor.name}")
+                    response.say(f"Sorry, no more slots available today for Doctor {doctor.name}. Please try another date.")
+                    response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+                    return HttpResponse(str(response), content_type='text/xml')
+            else:
+                best_slot = available_slots[0]
+                ivr_logger.info(f"IVR: Selected slot {best_slot} for Dr. {doctor.name} on {date_str}")
+            
+            date_spoken = "today" if target_date == timezone.now().date() else target_date.strftime("%B %d")
+            time_spoken = datetime.strptime(best_slot, '%H:%M').strftime('%I:%M %p')
+            action_url = f'/api/ivr/confirm-booking/?doctor_id={doctor.id}&date={date_str}&time={best_slot}&phone={caller_phone_number}'
+            gather = response.gather(num_digits=1, action=action_url)
+            gather.say(f"Available slot with Doctor {doctor.name} on {date_spoken} at {time_spoken}. Press 1 to confirm, press 2 to cancel.")
+            response.redirect(f'/api/ivr/handle-specific-doctor-date/{clinic_id}/{spec}/{date_str}/?phone={caller_phone_number}')
+        else:
+            ivr_logger.warning(f"IVR: No available slots for Dr. {doctor.name} on {date_str}")
+            response.say(f"Sorry, Doctor {doctor.name} has no available slots on {target_date.strftime('%B %d')}. Please try another doctor or date.")
+            response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+            
+    except (ValueError, IndexError, TypeError, Clinic.DoesNotExist, Doctor.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Specific Doctor Date Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+    return HttpResponse(str(response), content_type='text/xml')
+
+# --- NEW: Handle specific doctor selection ---
+@csrf_exempt
+def ivr_handle_specific_doctor(request, clinic_id, spec):
+    choice = request.POST.get('Digits')
+    caller_phone_number = request.POST.get('From', None) or request.GET.get('phone')
+    ivr_logger.info(f"IVR Specific Doctor - From: {caller_phone_number}, Choice: {choice}")
+    
+    response = VoiceResponse()
+    if not caller_phone_number:
+        response.say("Could not identify phone number. Goodbye.")
+        response.hangup()
+        return HttpResponse(str(response), content_type='text/xml')
+    
+    try:
+        clinic = Clinic.objects.get(id=clinic_id)
+        doctor = Doctor.objects.filter(clinic=clinic, specialization=spec)[int(choice) - 1]
+        appointment_date, slot_str = _find_next_available_slot_for_doctor(doctor.id)
+        
+        if appointment_date and slot_str:
+            today = timezone.now().date()
+            if appointment_date == today:
+                date_spoken = "today"
+            elif appointment_date == today + timedelta(days=1):
+                date_spoken = "tomorrow"
+            else:
+                date_spoken = appointment_date.strftime("%B %d")
+            
+            time_spoken = datetime.strptime(slot_str, '%H:%M').strftime('%I:%M %p')
+            action_url = f'/api/ivr/confirm-booking/?doctor_id={doctor.id}&date={appointment_date.strftime("%Y-%m-%d")}&time={slot_str}&phone={caller_phone_number}'
+            gather = response.gather(num_digits=1, action=action_url)
+            gather.say(f"The next available slot with Doctor {doctor.name} is at {time_spoken} on {date_spoken}. Press 1 to confirm, press 2 to cancel.")
+            response.redirect(f'/api/ivr/handle-specific-doctor/{clinic_id}/{spec}/?phone={caller_phone_number}')
+        else:
+            response.say(f"Sorry, Doctor {doctor.name} has no available slots in the coming days. Please try another doctor.")
+            response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
+            
+    except (ValueError, IndexError, TypeError, Clinic.DoesNotExist, Doctor.DoesNotExist) as e:
+        ivr_logger.error(f"IVR Specific Doctor Error: {e}")
+        response.say("Invalid choice or error.")
+        response.redirect(f'/api/ivr/handle-date-doctor-choice/{clinic_id}/{spec}/?phone={caller_phone_number}')
     return HttpResponse(str(response), content_type='text/xml')
 
 # --- MODIFIED: Finds slot and asks for confirmation ---
@@ -985,6 +1650,9 @@ def ivr_handle_doctor(request, clinic_id, spec):
 @csrf_exempt
 def ivr_confirm_booking(request):
     choice = request.POST.get('Digits')
+    caller = request.POST.get('From', 'Unknown')
+    ivr_logger.info(f"IVR Confirm Booking - From: {caller}, Choice: {choice}")
+    
     response = VoiceResponse()
     # Get details passed in the action URL's query parameters
     # Prefer GET query params (action URL) but fall back to POST form fields (Twilio sometimes posts From)
@@ -992,6 +1660,8 @@ def ivr_confirm_booking(request):
     date_str = request.GET.get('date') or request.POST.get('date')
     time_str = request.GET.get('time') or request.POST.get('time')
     caller_phone_number = (request.GET.get('phone') or request.POST.get('phone') or request.POST.get('From'))
+
+    ivr_logger.info(f"IVR Confirm: doctor_id={doctor_id}, date={date_str}, time={time_str}, phone={caller_phone_number}")
 
     if not all([doctor_id, date_str, time_str, caller_phone_number]):
         # Try parsing raw QUERY_STRING as a last resort (some test clients may not populate request.GET)
@@ -1007,22 +1677,32 @@ def ivr_confirm_booking(request):
         except Exception:
             pass
         # Debug output to help tests understand why booking info was missing
-        print(f"IVR Confirm: After fallback parse. PATH={request.get_full_path()} QUERY_STRING={request.META.get('QUERY_STRING')} GET={dict(request.GET)} POST={dict(request.POST)} ParsedFallback_doctor={doctor_id} date={date_str} time={time_str} phone={caller_phone_number}")
+        ivr_logger.error(f"IVR Confirm: Missing booking info. PATH={request.get_full_path()} QUERY_STRING={request.META.get('QUERY_STRING')} GET={dict(request.GET)} POST={dict(request.POST)} ParsedFallback_doctor={doctor_id} date={date_str} time={time_str} phone={caller_phone_number}")
         response.say("Sorry, booking information is missing. Please start over.")
         response.redirect('/api/ivr/welcome/')
         return HttpResponse(str(response), content_type='text/xml')
 
     try:
         if choice == '1': # Confirm booking
+            ivr_logger.info(f"IVR: Confirming booking for doctor {doctor_id} on {date_str} at {time_str}")
             doctor = Doctor.objects.get(id=int(doctor_id))
             appointment_date = datetime.strptime(date_str, '%Y-%m-%d').date()
 
+            # Double-check slot availability before booking
+            available_slots = _get_available_slots_for_doctor(doctor.id, appointment_date.strftime('%Y-%m-%d'))
+            if time_str not in available_slots:
+                ivr_logger.warning(f"IVR: Slot {time_str} no longer available for doctor {doctor.id} on {appointment_date}")
+                response.say("Sorry, this slot was just booked by someone else. Please try again.")
+                response.hangup()
+                return HttpResponse(str(response), content_type='text/xml')
+            
             # Attempt to create the token using the helper
             # This helper now ALSO creates a User and sends a password SMS if it's a new patient
             new_token = _create_ivr_token(doctor, appointment_date, time_str, caller_phone_number)
 
             if new_token:
                 # Booking succeeded
+                ivr_logger.info(f"IVR: Booking successful - Token {new_token.id} created for {caller_phone_number}")
                 date_spoken = "today" if new_token.date == timezone.now().date() else new_token.date.strftime("%B %d")
                 time_spoken = new_token.appointment_time.strftime('%I:%M %p')
                 token_num_spoken = f"Your token number is {new_token.token_number}." if new_token.token_number else ""
@@ -1031,31 +1711,52 @@ def ivr_confirm_booking(request):
                 # The "welcome" SMS is sent from the helper
                 message = (f"Your appointment with Dr. {doctor.name} is confirmed for "
                            f"{time_spoken} on {date_spoken}. {token_num_spoken}")
-                try: send_sms_notification(caller_phone_number, message)
-                except Exception as e: print(f"IVR Confirm: Failed to send APPOINTMENT SMS to {caller_phone_number}: {e}")
+                try: 
+                    send_sms_notification(caller_phone_number, message)
+                    ivr_logger.info(f"IVR: Confirmation SMS sent to {caller_phone_number}")
+                except Exception as e: 
+                    ivr_logger.error(f"IVR Confirm: Failed to send APPOINTMENT SMS to {caller_phone_number}: {e}")
 
                 response.say(f"Booking confirmed for {time_spoken} on {date_spoken}. Confirmation SMS has been sent. Goodbye.")
                 response.hangup()
             else:
-                # Booking failed (slot taken, user already booked, db error etc.)
-                response.say("Sorry, we could not book this slot. It might have been taken or you may already have an active appointment. Please try again.")
+                # Booking failed - check if it's because patient already has active token
+                from api.models import Patient
+                try:
+                    patient = Patient.objects.get(phone_number=caller_phone_number)
+                    existing_tokens = Token.objects.filter(patient=patient).exclude(status__in=['completed', 'cancelled', 'skipped'])
+                    if existing_tokens.exists():
+                        existing_token = existing_tokens.first()
+                        existing_date_spoken = "today" if existing_token.date == timezone.now().date() else existing_token.date.strftime("%B %d")
+                        existing_time_spoken = existing_token.appointment_time.strftime('%I:%M %p') if existing_token.appointment_time else "unscheduled"
+                        ivr_logger.warning(f"IVR: Booking failed - patient already has appointment on {existing_token.date} at {existing_token.appointment_time}")
+                        response.say(f"You already have an appointment scheduled for {existing_time_spoken} on {existing_date_spoken}. Please cancel that first or contact the clinic.")
+                    else:
+                        ivr_logger.warning(f"IVR: Booking failed for {caller_phone_number} - slot may be taken")
+                        response.say("Sorry, this slot was just taken by someone else. Please try again.")
+                except Patient.DoesNotExist:
+                    response.say("Sorry, we could not process your booking. Please try again.")
                 response.hangup()
 
         elif choice == '2': # Cancel booking attempt
+            ivr_logger.info(f"IVR: Booking cancelled by user {caller_phone_number}")
             response.say("Booking cancelled. Goodbye.")
             response.hangup()
         else: # Invalid digit
+            ivr_logger.warning(f"IVR: Invalid choice '{choice}' from {caller_phone_number}")
             response.say("Invalid choice. Hanging up.")
             response.hangup() # End call on invalid input to avoid loops
 
     except Doctor.DoesNotExist:
+        ivr_logger.error(f"IVR: Doctor {doctor_id} not found")
         response.say("Doctor information error. Please start over.")
         response.redirect('/api/ivr/welcome/')
-    except ValueError: # Handle potential errors converting date/time/doctor_id
+    except ValueError as e: # Handle potential errors converting date/time/doctor_id
+        ivr_logger.error(f"IVR: Value error in confirm booking: {e}")
         response.say("Booking information error. Please start over.")
         response.redirect('/api/ivr/welcome/')
     except Exception as e:
-        print(f"Error in ivr_confirm_booking: {e}")
+        ivr_logger.error(f"IVR: Error in confirm booking: {e}")
         response.say("An application error occurred during confirmation. Goodbye.")
         response.hangup()
 
@@ -1480,27 +2181,62 @@ class SimpleAISummaryView(APIView):
             if not patient_history.strip():
                 return Response({'error': 'Patient history is required'}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Simple extractive summary
-            lines = patient_history.split('\n')
-            medical_info = []
+            # Enhanced extractive summary with medical structure
+            lines = [line.strip() for line in patient_history.split('\n') if line.strip()]
+            
+            # Extract key medical information
+            complaints = []
+            diagnoses = []
+            treatments = []
+            medications = []
+            vitals = []
             
             for line in lines:
-                line = line.strip()
-                if line and any(word in line.lower() for word in [
-                    'patient', 'doctor', 'notes', 'prescription', 'symptoms', 
-                    'diagnosis', 'treatment', 'medication', 'complaint', 'pain',
-                    'fever', 'blood', 'pressure', 'heart', 'breathing'
-                ]):
-                    medical_info.append(line)
+                line_lower = line.lower()
+                if any(word in line_lower for word in ['complaint', 'complain', 'symptom', 'pain', 'ache', 'fever', 'headache']):
+                    complaints.append(line)
+                elif any(word in line_lower for word in ['diagnosis', 'diagnosed', 'condition', 'disease']):
+                    diagnoses.append(line)
+                elif any(word in line_lower for word in ['treatment', 'therapy', 'procedure', 'surgery']):
+                    treatments.append(line)
+                elif any(word in line_lower for word in ['prescribed', 'medication', 'medicine', 'drug', 'tablet', 'capsule']):
+                    medications.append(line)
+                elif any(word in line_lower for word in ['blood pressure', 'temperature', 'pulse', 'weight', 'bp', 'temp']):
+                    vitals.append(line)
             
-            if medical_info:
-                summary = "MEDICAL SUMMARY:\n\n" + "\n".join(medical_info[:5])
+            # Build structured summary
+            summary_parts = []
+            
+            if complaints:
+                summary_parts.append(f"CHIEF COMPLAINTS: {'; '.join(complaints[:2])}")
+            
+            if vitals:
+                summary_parts.append(f"VITALS: {'; '.join(vitals[:2])}")
+            
+            if diagnoses:
+                summary_parts.append(f"DIAGNOSIS: {'; '.join(diagnoses[:2])}")
+            
+            if treatments:
+                summary_parts.append(f"TREATMENT: {'; '.join(treatments[:2])}")
+            
+            if medications:
+                summary_parts.append(f"MEDICATIONS: {'; '.join(medications[:2])}")
+            
+            if summary_parts:
+                summary = "MEDICAL SUMMARY:\n\n" + "\n\n".join(summary_parts)
             else:
-                summary = "Patient medical history available. Key information extracted from consultation records."
+                # Fallback to general medical lines
+                medical_lines = [line for line in lines if any(word in line.lower() for word in [
+                    'patient', 'doctor', 'notes', 'consultation', 'examination', 'advised'
+                ])]
+                if medical_lines:
+                    summary = "CONSULTATION SUMMARY:\n\n" + "\n".join(medical_lines[:3])
+                else:
+                    summary = "Patient consultation history available. Medical records contain relevant clinical information."
             
             return Response({
                 'summary': summary,
-                'model': 'extractive_summarizer',
+                'model': 'clinical_extractive_summarizer',
                 'phone': phone
             })
             

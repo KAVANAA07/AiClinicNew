@@ -9,6 +9,7 @@ urlpatterns = [
 
     # Patient Self-Service
     path('register/patient/', views.PatientRegisterView.as_view(), name='patient-register'),
+    path('link-ivr-account/', views.LinkIVRAccountView.as_view(), name='link-ivr-account'),
     
     # ✅ FIX: Explicitly matches App.js call
     path('tokens/get_my_token/', views.GetPatientTokenView.as_view(), name='get-patient-token'),
@@ -57,8 +58,14 @@ urlpatterns = [
     path('ivr/handle-district/<int:state_id>/', views.ivr_handle_district, name='ivr-handle-district'),
     path('ivr/handle-clinic/<int:district_id>/', views.ivr_handle_clinic, name='ivr-handle-clinic'),
     path('ivr/handle-booking-type/<int:clinic_id>/', views.ivr_handle_booking_type, name='ivr-handle-booking-type'),
+    path('ivr/handle-next-available-spec/<int:clinic_id>/', views.ivr_handle_next_available_spec, name='ivr-handle-next-available-spec'),
     path('ivr/handle-specialization/<int:clinic_id>/', views.ivr_handle_specialization, name='ivr-handle-specialization'),
     path('ivr/handle-doctor/<int:clinic_id>/<str:spec>/', views.ivr_handle_doctor, name='ivr-handle-doctor'),
+    path('ivr/handle-date-specialization/<int:clinic_id>/', views.ivr_handle_date_specialization, name='ivr-handle-date-specialization'),
+    path('ivr/handle-date-doctor-choice/<int:clinic_id>/<str:spec>/', views.ivr_handle_date_doctor_choice, name='ivr-handle-date-doctor-choice'),
+    path('ivr/handle-date-input/<int:clinic_id>/<str:spec>/', views.ivr_handle_date_input, name='ivr-handle-date-input'),
+    path('ivr/handle-specific-doctor-date/<int:clinic_id>/<str:spec>/<str:date_str>/', views.ivr_handle_specific_doctor_date, name='ivr-handle-specific-doctor-date'),
+    path('ivr/handle-specific-doctor/<int:clinic_id>/<str:spec>/', views.ivr_handle_specific_doctor, name='ivr-handle-specific-doctor'),
     path('ivr/confirm-booking/', views.ivr_confirm_booking, name='ivr-confirm-booking'),
     path('sms/incoming/', views.handle_incoming_sms, name='incoming-sms'),
 

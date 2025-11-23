@@ -29,9 +29,12 @@ DEBUG = True
 # Allow localhost, 127.0.0.1, and your ngrok hostname (without https://)
 ALLOWED_HOSTS = [
     '0a490259b696.ngrok-free.app',
-    'b2ee8587838a.ngrok-free.app', # Add both URLs
+    'b2ee8587838a.ngrok-free.app',
+    '*.ngrok-free.app',
     'localhost',
-    '127.0.0.1'
+    '127.0.0.1',
+    '0.0.0.0',
+    'testserver'  # For Django testing
 ]
 
 INSTALLED_APPS = [
@@ -51,8 +54,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    # 'whitenoise.middleware.WhiteNoiseMiddleware', # Removed - Not needed for local dev
-    'corsheaders.middleware.CorsMiddleware', # Keep CorsMiddleware near the top
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -133,7 +135,11 @@ LOGGING = {
     'disable_existing_loggers': False,
     'formatters': {
         'verbose': {
-            'format': '{levelname} {asctime} {module} {message}',
+            'format': '[{asctime}] {levelname} {name}: {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '[{asctime}] {levelname}: {message}',
             'style': '{',
         },
     },
@@ -145,7 +151,7 @@ LOGGING = {
     },
     'root': {
         'handlers': ['console'],
-        'level': 'DEBUG',
+        'level': 'INFO',
     },
     'loggers': {
         'django.server': {
@@ -155,17 +161,22 @@ LOGGING = {
         },
         'django.request': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'INFO',
             'propagate': False,
         },
-        'django.db.backends': {
+        'api.views': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'api.ivr': {
+            'handlers': ['console'],
+            'level': 'INFO',
             'propagate': False,
         },
         'api': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'INFO',
             'propagate': False,
         },
     },
