@@ -245,15 +245,16 @@ function PublicHomePage() {
                                 <h3>{clinic.name}</h3>
                                 <p>{clinic.city}</p>
                                 
-                                {/* --- NEW: Display stats --- */}
+                                {/* --- ENHANCED: Display AI-predicted stats --- */}
                                 <div className="clinic-stats">
-                                    <div className="stat-item" title="Average Wait Time">
+                                    <div className="stat-item ai-prediction" title="AI-Predicted Average Wait Time">
                                         <ClockIcon />
-                                        <span>{clinic.average_wait_time} min wait</span>
+                                        <span className="ai-time">{clinic.average_wait_time} min</span>
+                                        <small className="ai-label">AI Predicted</small>
                                     </div>
                                     <div className="stat-item" title="Total Patients Today">
                                         <TicketIcon />
-                                        <span>{clinic.total_tokens} tokens</span>
+                                        <span>{clinic.total_tokens} patients</span>
                                     </div>
                                 </div>
                             </div>

@@ -108,6 +108,9 @@ class Token(models.Model):
     )
     appointment_time = models.TimeField(null=True, blank=True)
     distance_km = models.FloatField(null=True, blank=True)
+    consultation_start_time = models.DateTimeField(null=True, blank=True)
+    arrival_confirmed_at = models.DateTimeField(null=True, blank=True)
+    predicted_waiting_time = models.IntegerField(null=True, blank=True, help_text="Predicted waiting time in minutes")
 
     class Meta:
         unique_together = [

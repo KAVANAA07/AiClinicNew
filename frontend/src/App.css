@@ -28,6 +28,7 @@ html {
 
     --success-color: #198754;
     --danger-color: #dc3545;
+    --error-color: #dc3545;
     --info-color: #2196F3;
     /* Electric Blue from our plan */
 
@@ -1418,4 +1419,40 @@ input:checked + .toggle-slider:before {
 
 .table-btn.confirm-btn:hover {
     background-color: #27ae60;
+}
+
+/* Live Queue Widget Animations */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.live-queue-widget {
+    transition: all 0.3s ease;
+}
+
+.live-queue-widget.updating {
+    box-shadow: 0 0 20px rgba(33, 150, 243, 0.3);
+    transform: scale(1.02);
+}
+
+/* Success message with AI enhancement styling */
+.success-message.ai-enhanced {
+    background: linear-gradient(135deg, #e8f5e8, #f0f8ff);
+    border: 2px solid #4caf50;
+    color: #2e7d32;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
 }

@@ -140,13 +140,25 @@ class ClinicWithDoctorsSerializer(serializers.ModelSerializer):
         return Token.objects.filter(clinic=obj, date=today).count()
 
     def get_average_wait_time(self, obj):
-        today = timezone.now().date()
-        completed_tokens = Token.objects.filter(clinic=obj, date=today, status='completed', completed_at__isnull=False)
-        if not completed_tokens.exists(): return 0
-        avg_wait_data = completed_tokens.aggregate(avg_duration=Avg(F('completed_at') - F('created_at')))
-        if avg_wait_data['avg_duration']:
-            return round(avg_wait_data['avg_duration'].total_seconds() / 60)
-        return 0
+        # Use AI-predicted waiting times if available
+        if hasattr(obj, 'avg_waiting_time'):
+            return obj.avg_waiting_time
+        
+        # Fallback to real-time AI predictions
+        from .waiting_time_predictor import waiting_time_predictor
+        total_predicted_wait = 0
+        doctor_count = 0
+        
+        for doctor in obj.doctors.all():
+            try:
+                predicted_wait = waiting_time_predictor.predict_waiting_time(doctor.id)
+                if predicted_wait:
+                    total_predicted_wait += predicted_wait
+                    doctor_count += 1
+            except Exception:
+                pass
+        
+        return round(total_predicted_wait / doctor_count) if doctor_count > 0 else 15
 
 
 class DoctorScheduleSerializer(serializers.ModelSerializer):

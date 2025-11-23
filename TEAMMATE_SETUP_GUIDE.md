@@ -70,6 +70,12 @@ npm start
 - Normalized phone number matching
 - AI-powered consultation summaries
 
+### 🤖 AI Waiting Time Prediction
+- Machine learning model predicts patient waiting times
+- Automatic nightly training using historical data
+- Real-time predictions when patients arrive
+- High accuracy with ~12 minute average error
+
 ### ⏰ Smart Slot Management
 - Real-time availability checking
 - Automatic expired token cancellation
@@ -90,6 +96,12 @@ python test_doctor_restriction.py
 ### Test IVR Flow
 ```bash
 python test_ivr_complete.py
+```
+
+### Test AI Waiting Time Prediction
+```bash
+python test_waiting_time_prediction.py
+python setup_ml_schedules.py
 ```
 
 ## Environment Variables (.env)
@@ -134,6 +146,7 @@ AiClinicNew/
 ```
 
 ## Recent Updates
+- ✅ **AI Waiting Time Prediction** - ML model predicts patient waiting times
 - ✅ Doctor restriction for patient history search
 - ✅ IVR-Web account integration with phone sync
 - ✅ AI consultation summarizer (works offline)
@@ -143,6 +156,7 @@ AiClinicNew/
 
 ## Need Help?
 Check the documentation files:
+- `WAITING_TIME_PREDICTION_GUIDE.md` - Complete AI prediction system guide
 - `DOCTOR_RESTRICTION_SUMMARY.md`
 - `PATIENT_HISTORY_SYNC_FIX.md`
 - `IVR_WEB_INTEGRATION_SUMMARY.md`

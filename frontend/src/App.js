@@ -7,6 +7,8 @@ import './LoginPage.css';
 // --- LOGO IMPORT ---
 import PatientAISummary from './components/PatientAISummary';
 import ScheduleManagement from './components/ScheduleManagement';
+import LiveQueueWidget from './components/LiveQueueWidget';
+import MedicalSummary from './components/MedicalSummary';
 
 import medqLogo from './logo.jpg'; // Assuming logo.png is in the src folder
 
@@ -422,15 +424,14 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
     const [queue, setQueue] = useState([]);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
-
-    // --- NEW: Emergency History Search State ---
     const [searchPhone, setSearchPhone] = useState('');
     const [searchHistory, setSearchHistory] = useState(null);
     const [searchError, setSearchError] = useState('');
     const [isSearching, setIsSearching] = useState(false);
     const [aiSummary, setAiSummary] = useState('');
     const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
-    // --- END NEW STATE ---
+    const [showMedicalSummary, setShowMedicalSummary] = useState(false);
+    const [medicalSummaryPhone, setMedicalSummaryPhone] = useState('');
 
     const fetchQueue = useCallback(async () => {
         setError(''); 
@@ -571,6 +572,19 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                         </div>
                         <button type="submit" className="primary-button" disabled={isSearching} style={{padding: '12px 24px', minWidth: '140px'}}>
                             {isSearching ? '🔄 Searching...' : '🔍 Search History'}
+                        </button>
+                        <button 
+                            type="button" 
+                            onClick={() => {
+                                if (searchPhone.trim()) {
+                                    setMedicalSummaryPhone(searchPhone.trim());
+                                    setShowMedicalSummary(true);
+                                }
+                            }}
+                            className="secondary-button"
+                            style={{padding: '12px 24px', minWidth: '140px', background: 'linear-gradient(135deg, #667eea, #764ba2)', color: 'white'}}
+                        >
+                            📋 Medical Summary
                         </button>
                     </form>
 
@@ -750,6 +764,16 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                                 </td>
                                                 <td>
                                                     <button onClick={() => onViewHistory(token.patient)} className="table-btn history-btn">History</button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            setMedicalSummaryPhone(token.patient?.phone_number || '');
+                                                            setShowMedicalSummary(true);
+                                                        }} 
+                                                        className="table-btn" 
+                                                        style={{background: 'linear-gradient(135deg, #667eea, #764ba2)', color: 'white', marginLeft: '5px'}}
+                                                    >
+                                                        Summary
+                                                    </button>
                                                 </td>
                                                 <td>
                                                     <button onClick={() => handleStaffUpdateStatus(token.id, 'skipped')} className="table-btn skip-btn">Skip</button>
@@ -793,6 +817,16 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                                                 <td><span className="disabled-text">Not Arrived</span></td>
                                                 <td>
                                                     <button onClick={() => onViewHistory(token.patient)} className="table-btn history-btn">History</button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            setMedicalSummaryPhone(token.patient?.phone_number || '');
+                                                            setShowMedicalSummary(true);
+                                                        }} 
+                                                        className="table-btn" 
+                                                        style={{background: 'linear-gradient(135deg, #667eea, #764ba2)', color: 'white', marginLeft: '5px'}}
+                                                    >
+                                                        Summary
+                                                    </button>
                                                 </td>
                                                 <td>
                                                     <button onClick={() => handleStaffUpdateStatus(token.id, 'cancelled')} className="table-btn cancel-btn">Cancel</button>
@@ -823,6 +857,17 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
                     </div>
                 </div>
             </div>
+            
+            {/* Medical Summary Modal */}
+            {showMedicalSummary && (
+                <MedicalSummary 
+                    phoneNumber={medicalSummaryPhone}
+                    onClose={() => {
+                        setShowMedicalSummary(false);
+                        setMedicalSummaryPhone('');
+                    }}
+                />
+            )}
         </div> 
     );
 };
@@ -1097,7 +1142,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
     
     useEffect(() => { 
         fetchAllData(); 
-        const interval = setInterval(fetchTodaysToken, 10000); 
+        const interval = setInterval(fetchTodaysToken, 5000); // Refresh every 5 seconds 
         return () => clearInterval(interval); 
     }, [fetchAllData, fetchTodaysToken]);
     
@@ -1124,9 +1169,10 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
             let doctorId = null;
             let queueDate = today;
             
-            if (currentToken && currentToken.doctor_id && currentToken.status !== 'completed' && currentToken.status !== 'cancelled') {
-                doctorId = currentToken.doctor_id;
-                queueDate = currentToken.date;
+            // Always show queue if patient has any token or selecting doctor
+            if (currentToken && (currentToken.doctor_id || currentToken.doctor?.id)) {
+                doctorId = currentToken.doctor_id || currentToken.doctor?.id;
+                queueDate = currentToken.date || today;
             } else if (selectedDoctorId) {
                 doctorId = selectedDoctorId;
                 queueDate = bookingDate;
@@ -1135,9 +1181,9 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
             if (doctorId) {
                 try {
                     const response = await apiClient.get(`/patient/queue/${doctorId}/${queueDate}`); 
-                    setLiveQueue(response.data);
+                    setLiveQueue(Array.isArray(response.data) ? response.data : []);
                 } catch (err) {
-                    console.error("Could not fetch live queue.");
+                    console.error("Could not fetch live queue:", err);
                     setLiveQueue([]); 
                 }
             } else {
@@ -1145,7 +1191,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
             }
         };
         fetchLiveQueue(); 
-        const queueInterval = setInterval(fetchLiveQueue, 7000); 
+        const queueInterval = setInterval(fetchLiveQueue, 3000); // Refresh every 3 seconds
         return () => clearInterval(queueInterval);
     }, [currentToken, selectedDoctorId, bookingDate, today]); 
 
@@ -1301,7 +1347,25 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
             setCurrentToken(fullToken);
             // --- END OF FIX ---
 
-            setMessage('Appointment booked successfully!'); 
+            // Force refresh live queue immediately
+            setTimeout(() => {
+                const fetchLiveQueue = async () => {
+                    try {
+                        const response = await apiClient.get(`/patient/queue/${selectedDoctorId}/${bookingDate}`); 
+                        setLiveQueue(response.data);
+                    } catch (err) {
+                        console.error("Could not fetch live queue after booking.");
+                    }
+                };
+                fetchLiveQueue();
+            }, 1000);
+
+            // Enhanced success message with AI predictions
+            let successMsg = 'Appointment booked successfully!';
+            if (response.data.predicted_waiting_time) {
+                successMsg += ` 🤖 AI Prediction: ${response.data.predicted_waiting_time} minutes wait time. You are #${response.data.queue_position || 'N/A'} in queue.`;
+            }
+            setMessage(successMsg); 
             setSelectedClinicId('');
             setSelectedDoctorId('');
             setSelectedSlot('');
@@ -1372,15 +1436,26 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                         {/* --- MODIFIED: Show "Today's Status" or "Upcoming Appointment" --- */}
                         <h2>{currentToken?.date === getTodayDateString() ? "Your Status Today" : (currentToken ? "Your Upcoming Appointment" : "Book an Appointment")}</h2>
                         
-                        {message && <p className="success-message" style={{display:'block'}}>{message}</p>} 
+                        {message && <div className="success-message ai-enhanced" style={{display:'block', padding: '15px', background: 'linear-gradient(135deg, #e8f5e8, #f0f8ff)', border: '1px solid #4caf50', borderRadius: '8px', marginBottom: '20px'}}>{message}</div>} 
                         {error && <p className="error-message">{error}</p>}
                         
                         <button onClick={toggleHistoryView} className="secondary-button view-history-button">
                             {isHistoryVisible ? 'Hide History' : 'View Consultation History'}
                         </button>
 
-                        {currentToken ? ( 
+                        {currentToken && currentToken.id ? ( 
                             <div className="info-card">
+                                {/* Live Queue Widget - Always show when token exists */}
+                                {currentToken.id && (
+                                    <div style={{gridColumn: '1 / -1', marginBottom: '20px'}}>
+                                        <LiveQueueWidget 
+                                            tokenId={currentToken.id} 
+                                            doctorId={currentToken.doctor_id || currentToken.doctor?.id}
+                                            queuePosition={liveQueue.length > 0 ? Math.max(1, liveQueue.findIndex(t => String(t.id) === String(currentToken.id)) + 1) : 1}
+                                            totalInQueue={liveQueue.filter(t => ['waiting', 'confirmed', 'in_consultancy'].includes(t.status)).length || 1}
+                                        />
+                                    </div>
+                                )}
                                 {/* --- NEW: Show Date --- */}
                                 <InfoItem icon={<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>} 
                                     label="Appointment Date" 
@@ -1419,7 +1494,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                                         <label>Select Clinic</label>
                                         <select value={selectedClinicId} onChange={(e) => handleClinicChange(e.target.value)} required>
                                             <option value="">-- Choose a clinic --</option>
-                                            {clinics.map(clinic => (<option key={clinic.id} value={clinic.id}>{clinic.name} - {clinic.city}</option>))}
+                                            {clinics.map(clinic => (<option key={clinic.id} value={clinic.id}>{clinic.name} - {clinic.city} (Avg: {clinic.avg_waiting_time || 15} min)</option>))}
                                         </select>
                                     </div>
  
@@ -1428,7 +1503,7 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                                             <label>Select Doctor</label>
                                             <select value={selectedDoctorId} onChange={(e) => handleDoctorChange(e.target.value)} required>
                                                 <option value="">-- Choose a doctor --</option>
-                                                {doctorsOfSelectedClinic.map(doctor => (<option key={doctor.id} value={doctor.id}>{doctor.name} - {doctor.specialization}</option>))}
+                                                {doctorsOfSelectedClinic.map(doctor => (<option key={doctor.id} value={doctor.id}>{doctor.name} - {doctor.specialization} (Est: {doctor.current_wait_estimate || doctor.avg_wait_time || 12} min)</option>))}
                                             </select>
                                         </div>
                                     )}
@@ -1469,36 +1544,169 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                         )}
                     </div>
 
-                    {/* Show Live Queue for current appointment or when booking */}
-                    {((currentToken && currentToken.status !== 'completed' && currentToken.status !== 'cancelled' && currentToken.date === getTodayDateString()) || selectedDoctorId) && (
-                        <div className="card">
-                            <h2>Live Queue for Dr. {currentToken?.doctor?.name || (selectedDoctorId && doctorsOfSelectedClinic.find(d => String(d.id) === String(selectedDoctorId))?.name) || '...'}</h2>
-                            <div className="table-container">
-                                {liveQueue.length > 0 ? (
-                                    <table className="patient-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Position</th>
-                                                <th>Token</th>
-                                                <th>Patient</th>
-                                                <th>Time</th>
-                                                <th>Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {liveQueue.map((token, index) => (
-                                                <tr key={token.id} className={`${currentToken && String(token.id) === String(currentToken.id) ? 'my-token-row' : ''}`}>
-                                                    <td>{index + 1}</td>
-                                                    <td className="token-cell">#{token.token_number || (token.appointment_time ? 'Scheduled' : 'Walk-in')}</td>
-                                                    <td className="patient-cell">{token.patient?.name || 'Patient'}</td>
-                                                    <td>{token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}</td>
-                                                    <td><span className={`status-badge status-${token.status}`}>{token.status.replace(/_/g, ' ')}</span></td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                ) : <p>The queue is currently empty or loading...</p>}
+                    {/* Show Live Queue - Always visible when patient has token or selecting doctor */}
+                    {(currentToken || selectedDoctorId) && (
+                        <div className="card" style={{background: 'linear-gradient(135deg, #f8f9fa, #ffffff)', border: '2px solid var(--info-color)'}}>
+                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px'}}>
+                                <h2 style={{margin: 0, color: 'var(--primary-color)', display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                    🏥 Live Queue - Dr. {currentToken?.doctor?.name || (selectedDoctorId && doctorsOfSelectedClinic.find(d => String(d.id) === String(selectedDoctorId))?.name) || '...'}
+                                </h2>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '8px', background: '#e8f5e8', padding: '8px 12px', borderRadius: '20px', border: '1px solid #4caf50'}}>
+                                    <div style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4caf50', animation: 'pulse 2s infinite'}}></div>
+                                    <span style={{fontSize: '0.9rem', color: '#2e7d32', fontWeight: '600'}}>Live Updates</span>
+                                </div>
                             </div>
+                            
+                            {liveQueue.length > 0 ? (
+                                <div style={{background: 'white', borderRadius: '12px', overflow: 'hidden', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', border: '1px solid var(--light-gray)'}}>
+                                    <div style={{background: 'linear-gradient(135deg, var(--primary-color), var(--primary-hover))', color: 'white', padding: '15px 20px', display: 'grid', gridTemplateColumns: '50px 100px 1fr 100px 120px', gap: '12px', alignItems: 'center', fontSize: '0.85rem', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.5px'}}>
+                                        <div>🔢 Pos</div>
+                                        <div>🕐 Time</div>
+                                        <div>👥 Patient</div>
+                                        <div>🎫 Token</div>
+                                        <div>📊 Status</div>
+                                    </div>
+                                    
+                                    {liveQueue.map((token, index) => {
+                                        const isMyToken = currentToken && String(token.id) === String(currentToken.id);
+                                        
+                                        // Calculate actual position based on status and appointment time
+                                        let actualPosition = index + 1;
+                                        
+                                        if (token.status === 'in_consultancy') {
+                                            actualPosition = 'NOW'; // Currently being seen
+                                        } else if (['confirmed', 'waiting'].includes(token.status)) {
+                                            // Count how many are ahead in the actual queue order
+                                            const tokensAhead = liveQueue.slice(0, index).filter(t => 
+                                                ['confirmed', 'in_consultancy', 'waiting'].includes(t.status)
+                                            ).length;
+                                            actualPosition = tokensAhead + 1;
+                                        }
+                                        
+                                        const isNext = actualPosition === 1 && token.status === 'confirmed';
+                                        const statusIcon = {
+                                            'waiting': '⏳',
+                                            'confirmed': '✅', 
+                                            'in_consultancy': '🩺',
+                                            'completed': '✔️',
+                                            'cancelled': '❌',
+                                            'skipped': '⏭️'
+                                        };
+                                        
+                                        return (
+                                            <div key={token.id} style={{
+                                                display: 'grid',
+                                                gridTemplateColumns: '50px 100px 1fr 100px 120px',
+                                                gap: '12px',
+                                                alignItems: 'center',
+                                                padding: '15px 20px',
+                                                borderBottom: index < liveQueue.length - 1 ? '1px solid var(--light-gray)' : 'none',
+                                                background: isMyToken ? 'linear-gradient(90deg, rgba(255, 152, 0, 0.15), rgba(255, 152, 0, 0.05))' : 
+                                                           isNext ? 'linear-gradient(90deg, rgba(76, 175, 80, 0.1), rgba(76, 175, 80, 0.03))' : 
+                                                           token.status === 'in_consultancy' ? 'linear-gradient(90deg, rgba(33, 150, 243, 0.1), rgba(33, 150, 243, 0.03))' :
+                                                           index % 2 === 0 ? '#fafafa' : 'white',
+                                                borderLeft: isMyToken ? '4px solid var(--highlight-color)' : 
+                                                           isNext ? '4px solid #4caf50' : 
+                                                           token.status === 'in_consultancy' ? '4px solid #2196f3' :
+                                                           '4px solid transparent',
+                                                transition: 'all 0.3s ease',
+                                                fontSize: '0.9rem',
+                                                boxShadow: isMyToken ? '0 2px 8px rgba(255, 152, 0, 0.2)' : 'none'
+                                            }}>
+                                                <div style={{
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    width: '30px',
+                                                    height: '30px',
+                                                    borderRadius: '50%',
+                                                    background: isMyToken ? 'var(--highlight-color)' : 
+                                                               isNext ? '#4caf50' : 
+                                                               token.status === 'in_consultancy' ? '#2196f3' :
+                                                               'var(--medium-gray)',
+                                                    color: 'white',
+                                                    fontWeight: 'bold',
+                                                    fontSize: '0.8rem'
+                                                }}>
+                                                    {actualPosition === 'NOW' ? '🩺' : actualPosition}
+                                                </div>
+                                                
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                    <span style={{fontSize: '1.1rem'}}>{token.appointment_time ? '📅' : '🚶'}</span>
+                                                    <span style={{fontWeight: '700', color: 'var(--primary-color)', fontSize: '0.85rem'}}>
+                                                        {token.appointment_time ? formatTime(token.appointment_time) : 'Walk-in'}
+                                                    </span>
+                                                </div>
+                                                
+                                                <div style={{fontWeight: '600', color: 'var(--text-color)', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                                                    {isMyToken && <span style={{fontSize: '1rem'}}>👤</span>}
+                                                    <span>{token.patient?.name || 'Patient'}</span>
+                                                    {isMyToken && <span style={{fontSize: '0.75rem', color: 'var(--highlight-color)', fontWeight: 'bold', background: 'rgba(255, 152, 0, 0.1)', padding: '2px 6px', borderRadius: '8px'}}>YOU</span>}
+                                                </div>
+                                                
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--dark-gray)', fontWeight: '500'}}>
+                                                    <span style={{fontSize: '1rem'}}>#{token.token_number || 'S'}</span>
+                                                </div>
+                                                
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                                                    <span style={{fontSize: '1.1rem'}}>{statusIcon[token.status] || '❓'}</span>
+                                                    <span className={`status-badge status-${token.status}`} style={{
+                                                        padding: '4px 10px',
+                                                        borderRadius: '15px',
+                                                        fontSize: '0.75rem',
+                                                        fontWeight: '600',
+                                                        textTransform: 'capitalize',
+                                                        letterSpacing: '0.3px',
+                                                        minWidth: '70px',
+                                                        textAlign: 'center'
+                                                    }}>
+                                                        {token.status === 'in_consultancy' ? 'Active' : 
+                                                         token.status === 'confirmed' ? 'Ready' :
+                                                         token.status === 'waiting' ? 'Waiting' :
+                                                         token.status === 'completed' ? 'Done' :
+                                                         token.status.replace(/_/g, ' ')}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    
+                                    {/* Queue Summary Footer */}
+                                    <div style={{background: 'linear-gradient(135deg, #f8f9fa, #ffffff)', padding: '15px 20px', borderTop: '2px solid var(--light-gray)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.85rem'}}>
+                                        <div style={{display: 'flex', alignItems: 'center', gap: '25px'}}>
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-color)'}}>
+                                                <span style={{fontSize: '1rem'}}>📊</span>
+                                                <span><strong>{liveQueue.length}</strong> Total</span>
+                                            </div>
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: '#4caf50'}}>
+                                                <span style={{fontSize: '1rem'}}>✅</span>
+                                                <span><strong>{liveQueue.filter(t => t.status === 'confirmed').length}</strong> Ready</span>
+                                            </div>
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: '#2196f3'}}>
+                                                <span style={{fontSize: '1rem'}}>🩺</span>
+                                                <span><strong>{liveQueue.filter(t => t.status === 'in_consultancy').length}</strong> Active</span>
+                                            </div>
+                                            <div style={{display: 'flex', alignItems: 'center', gap: '6px', color: '#ff9800'}}>
+                                                <span style={{fontSize: '1rem'}}>⏳</span>
+                                                <span><strong>{liveQueue.filter(t => t.status === 'waiting').length}</strong> Waiting</span>
+                                            </div>
+                                        </div>
+                                        <div style={{display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--medium-gray)'}}>
+                                            <div style={{width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#4caf50', animation: 'pulse 2s infinite'}}></div>
+                                            <span>Updated: {new Date().toLocaleTimeString()}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div style={{textAlign: 'center', padding: '60px 20px', background: 'white', borderRadius: '12px', border: '2px dashed var(--medium-gray)'}}>
+                                    <div style={{fontSize: '4rem', marginBottom: '20px'}}>🏥</div>
+                                    <h3 style={{margin: '0 0 15px 0', color: 'var(--dark-gray)', fontSize: '1.3rem'}}>No Appointments Today</h3>
+                                    <p style={{margin: 0, color: 'var(--medium-gray)', fontSize: '0.95rem'}}>The doctor's schedule is currently empty or appointments are loading...</p>
+                                    <div style={{marginTop: '20px', padding: '10px 20px', background: '#e3f2fd', borderRadius: '20px', display: 'inline-block'}}>
+                                        <span style={{fontSize: '0.85rem', color: '#1976d2'}}>🔄 Auto-refreshing every 10 seconds</span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -1582,6 +1790,43 @@ const AnalyticsDashboardComponent = ({ onBack }) => {
                     <div className="stat-card"><h3>Avg. Wait Time</h3><p>{stats.average_wait_time_minutes != null ? `${stats.average_wait_time_minutes} min` : 'N/A'}</p></div>
                 </div>
                 <div className="charts-container">
+                    {/* AI Predictions Section */}
+                    {stats.doctor_ai_predictions && stats.doctor_ai_predictions.length > 0 && (
+                        <div className="card ai-predictions-card" style={{background: 'linear-gradient(135deg, #f8f9fa, #e3f2fd)', border: '2px solid #2196f3'}}>
+                            <h2 style={{color: '#1976d2', display: 'flex', alignItems: 'center', gap: '10px'}}>
+                                🤖 AI Waiting Time Predictions
+                                <span style={{fontSize: '0.7em', background: '#4caf50', color: 'white', padding: '2px 8px', borderRadius: '12px'}}>LIVE</span>
+                            </h2>
+                            <div className="ai-predictions-grid" style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '15px', marginTop: '20px'}}>
+                                {stats.doctor_ai_predictions.map((prediction, index) => (
+                                    <div key={index} className="prediction-card" style={{background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 4px 8px rgba(0,0,0,0.1)', border: '1px solid #e0e0e0'}}>
+                                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px'}}>
+                                            <h3 style={{margin: 0, color: '#1976d2', fontSize: '1.1rem'}}>Dr. {prediction.doctor_name}</h3>
+                                            <span style={{background: '#e3f2fd', color: '#1976d2', padding: '4px 8px', borderRadius: '20px', fontSize: '0.8em', fontWeight: '600'}}>{prediction.specialization}</span>
+                                        </div>
+                                        <div className="prediction-stats" style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px'}}>
+                                            <div className="stat-box" style={{textAlign: 'center', padding: '10px', background: '#fff3e0', borderRadius: '8px', border: '1px solid #ffb74d'}}>
+                                                <div style={{fontSize: '1.5rem', fontWeight: '700', color: '#f57c00', marginBottom: '5px'}}>
+                                                    {prediction.predicted_waiting_time || 'N/A'}
+                                                </div>
+                                                <div style={{fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.5px'}}>AI Predicted (min)</div>
+                                            </div>
+                                            <div className="stat-box" style={{textAlign: 'center', padding: '10px', background: '#e8f5e8', borderRadius: '8px', border: '1px solid #81c784'}}>
+                                                <div style={{fontSize: '1.5rem', fontWeight: '700', color: '#388e3c', marginBottom: '5px'}}>
+                                                    {prediction.current_queue_length}
+                                                </div>
+                                                <div style={{fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.5px'}}>Queue Length</div>
+                                            </div>
+                                        </div>
+                                        <div style={{marginTop: '15px', padding: '10px', background: '#f5f5f5', borderRadius: '6px', fontSize: '0.9rem', color: '#666'}}>
+                                            <strong>Today's Patients:</strong> {prediction.todays_patients}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    
                     <div className="card">
                         <h2>Doctor Workload Today</h2>
                         <div className="workload-chart">

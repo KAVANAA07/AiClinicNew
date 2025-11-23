@@ -1,5 +1,19 @@
 from django.urls import path
 from . import views
+from .waiting_time_views import PredictWaitingTimeView, TrainModelView, WaitingTimeStatusView
+from .waiting_time_dashboard import ClinicWaitingTimeDashboardView, MyTokenWaitingTimeView
+from .model_accuracy_dashboard import ModelAccuracyDashboardView, ModelTrainingLogView
+from .training_management_views import TrainingManagementView, DataQualityView
+from .enhanced_views import (
+    RealTimeDashboardView, SmartQueueView, CommunicationHubView, 
+    AdvancedReportsView, ClinicInsightsView
+)
+from .smart_queue_views import (
+    RealTimeQueueView, EarlyArrivalView, ClinicOverviewView,
+    SmartQueueActionsView, PatientQueueStatusView, WalkInAvailabilityView
+)
+from . import live_dashboard_views
+from .medical_summary_views import MedicalSummaryView, ConsultationDetailView
 
 
 urlpatterns = [
@@ -52,6 +66,24 @@ urlpatterns = [
     path('schedules/', views.DoctorScheduleListView.as_view(), name='doctor-schedules'),
     path('schedules/<int:doctor_id>/', views.DoctorScheduleUpdateView.as_view(), name='doctor-schedule-update'),
 
+    # Waiting Time Prediction
+    path('waiting-time/predict/<int:doctor_id>/', PredictWaitingTimeView.as_view(), name='predict-waiting-time'),
+    path('waiting-time/train/', TrainModelView.as_view(), name='train-waiting-time-model'),
+    path('waiting-time/status/', WaitingTimeStatusView.as_view(), name='waiting-time-status'),
+    
+    # Waiting Time Dashboard
+    path('waiting-time/dashboard/', ClinicWaitingTimeDashboardView.as_view(), name='waiting-time-dashboard'),
+    path('waiting-time/dashboard/<int:clinic_id>/', ClinicWaitingTimeDashboardView.as_view(), name='clinic-waiting-time-dashboard'),
+    path('waiting-time/my-token/', MyTokenWaitingTimeView.as_view(), name='my-token-waiting-time'),
+    
+    # Model Accuracy Dashboard for Judges
+    path('model/accuracy/', ModelAccuracyDashboardView.as_view(), name='model-accuracy-dashboard'),
+    path('model/training-log/', ModelTrainingLogView.as_view(), name='model-training-log'),
+    
+    # Training Management
+    path('training/manage/', TrainingManagementView.as_view(), name='training-management'),
+    path('training/data-quality/', DataQualityView.as_view(), name='training-data-quality'),
+
     # IVR & SMS
     path('ivr/welcome/', views.ivr_welcome, name='ivr-welcome'),
     path('ivr/handle-state/', views.ivr_handle_state, name='ivr-handle-state'),
@@ -69,5 +101,31 @@ urlpatterns = [
     path('ivr/confirm-booking/', views.ivr_confirm_booking, name='ivr-confirm-booking'),
     path('sms/incoming/', views.handle_incoming_sms, name='incoming-sms'),
 
+    # Enhanced Features
+    path('dashboard/realtime/', RealTimeDashboardView.as_view(), name='realtime-dashboard'),
+    path('queue/smart/', SmartQueueView.as_view(), name='smart-queue'),
+    path('communication/', CommunicationHubView.as_view(), name='communication-hub'),
+    path('reports/advanced/', AdvancedReportsView.as_view(), name='advanced-reports'),
+    path('insights/', ClinicInsightsView.as_view(), name='clinic-insights'),
+    
+    # Smart Queue Management
+    path('queue/realtime/', RealTimeQueueView.as_view(), name='realtime-queue'),
+    path('queue/realtime/<int:doctor_id>/', RealTimeQueueView.as_view(), name='realtime-queue-doctor'),
+    path('queue/early-arrival/', EarlyArrivalView.as_view(), name='early-arrival'),
+    path('queue/clinic-overview/', ClinicOverviewView.as_view(), name='clinic-overview'),
+    path('queue/actions/', SmartQueueActionsView.as_view(), name='smart-queue-actions'),
+    path('queue/patient-status/', PatientQueueStatusView.as_view(), name='patient-queue-status'),
+    path('queue/walkin-availability/', WalkInAvailabilityView.as_view(), name='walkin-availability'),
+    
+    # Live Wait Times APIs
+    path('live-wait-times/', live_dashboard_views.LiveWaitTimesView.as_view(), name='live_wait_times'),
+    path('token-wait-time/<int:token_id>/', live_dashboard_views.TokenWaitTimeView.as_view(), name='token_wait_time'),
+    path('doctor-flow/<int:doctor_id>/', live_dashboard_views.DoctorFlowAnalysisView.as_view(), name='doctor_flow'),
+    path('live-dashboard-overview/', live_dashboard_views.LiveDashboardOverviewView.as_view(), name='live_dashboard_overview'),
+    path('update-token-status/<int:token_id>/', live_dashboard_views.UpdateTokenStatusView.as_view(), name='update_token_status'),
+    
+    # Medical Summary System
+    path('medical-summary/', MedicalSummaryView.as_view(), name='medical-summary'),
+    path('consultation/<int:consultation_id>/', ConsultationDetailView.as_view(), name='consultation-detail'),
 
 ]

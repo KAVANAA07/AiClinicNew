@@ -31,6 +31,9 @@ import random
 
 # --- Core App Imports ---
 from .utils.utils import send_sms_notification
+from .waiting_time_predictor import waiting_time_predictor
+from .advanced_wait_predictor import advanced_wait_predictor
+from .clinic_wait_stats import ClinicWaitStats
 # --- Imports for Django-Q Scheduling ---
 from django_q.tasks import async_task
 from datetime import datetime, timedelta, time
@@ -311,6 +314,22 @@ class PublicClinicListView(generics.ListAPIView):
     queryset = Clinic.objects.prefetch_related('doctors').all()
     serializer_class = ClinicWithDoctorsSerializer
     permission_classes = [permissions.AllowAny]
+    
+    def get_queryset(self):
+        """Add real-time average waiting times to clinic data"""
+        clinics = super().get_queryset()
+        
+        for clinic in clinics:
+            # Get historical average wait time for clinic
+            clinic.avg_waiting_time = ClinicWaitStats.get_clinic_avg_wait_time(clinic.id)
+            
+            # Add doctor-specific wait times
+            for doctor in clinic.doctors.all():
+                doctor.avg_wait_time = ClinicWaitStats.get_doctor_avg_wait_time(doctor.id)
+                workload = ClinicWaitStats.get_doctor_current_workload(doctor.id)
+                doctor.current_wait_estimate = doctor.avg_wait_time + workload['workload_factor']
+        
+        return clinics
 
 class ClinicAnalyticsView(APIView):
     permission_classes = [IsAuthenticated]
@@ -331,11 +350,34 @@ class ClinicAnalyticsView(APIView):
         avg_wait_data = completed_tokens.aggregate(avg_duration=Avg(F('completed_at') - F('created_at')))
         avg_wait_minutes = round(avg_wait_data['avg_duration'].total_seconds() / 60, 1) if avg_wait_data['avg_duration'] else 0
 
+        # Add AI predictions for each doctor
+        doctor_predictions = []
+        for doctor in clinic.doctors.all():
+            try:
+                predicted_wait = waiting_time_predictor.predict_waiting_time(doctor.id)
+                current_queue = todays_tokens.filter(doctor=doctor, status__in=['waiting', 'confirmed']).count()
+                doctor_predictions.append({
+                    'doctor_name': doctor.name,
+                    'specialization': doctor.specialization,
+                    'predicted_waiting_time': predicted_wait,
+                    'current_queue_length': current_queue,
+                    'todays_patients': todays_tokens.filter(doctor=doctor).count()
+                })
+            except Exception:
+                doctor_predictions.append({
+                    'doctor_name': doctor.name,
+                    'specialization': doctor.specialization,
+                    'predicted_waiting_time': None,
+                    'current_queue_length': todays_tokens.filter(doctor=doctor, status__in=['waiting', 'confirmed']).count(),
+                    'todays_patients': todays_tokens.filter(doctor=doctor).count()
+                })
+
         stats = {
             'clinic_name': clinic.name, 'date': today.strftime("%B %d, %Y"),
             'total_patients': todays_tokens.count(),
             'average_wait_time_minutes': avg_wait_minutes,
             'doctor_workload': list(todays_tokens.values('doctor__name').annotate(count=Count('id')).order_by('-count')),
+            'doctor_ai_predictions': doctor_predictions,
             'patient_status_breakdown': {
                 'waiting': todays_tokens.filter(status='waiting').count(),
                 'confirmed': todays_tokens.filter(status='confirmed').count(),
@@ -522,8 +564,30 @@ class ConfirmArrivalView(APIView):
                 return Response({'error': f'You are approximately {distance:.1f} km away. You must be within 1 km to confirm your arrival.'}, status=status.HTTP_400_BAD_REQUEST)
 
             token.status = 'confirmed'
+            token.arrival_confirmed_at = timezone.now()
+            
+            # Predict waiting time when patient arrives
+            try:
+                predicted_time = waiting_time_predictor.predict_waiting_time(
+                    token.doctor.id, 
+                    for_appointment_time=token.appointment_time
+                )
+                token.predicted_waiting_time = predicted_time
+                logger.info(f"Predicted waiting time for token {token.id}: {predicted_time} minutes")
+            except Exception as e:
+                logger.error(f"Failed to predict waiting time for token {token.id}: {e}")
+                token.predicted_waiting_time = 15  # Fallback
+            
             token.save()
-            return Response({"message": "Arrival confirmed successfully!", "token": TokenSerializer(token).data}, status=status.HTTP_200_OK)
+            
+            response_data = TokenSerializer(token).data
+            if token.predicted_waiting_time:
+                response_data['predicted_waiting_time'] = token.predicted_waiting_time
+                response_data['message'] = f"Arrival confirmed! Estimated waiting time: {token.predicted_waiting_time} minutes"
+            else:
+                response_data['message'] = "Arrival confirmed successfully!"
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         except Token.DoesNotExist: 
             return Response({'error': 'No active appointment found for today to confirm.'}, status=status.HTTP_404_NOT_FOUND)
         except Token.MultipleObjectsReturned: 
@@ -646,11 +710,34 @@ class PatientCreateTokenView(APIView):
         except IntegrityError:
             return Response({'error': 'Database conflict trying to book slot. Please try again.'}, status=status.HTTP_409_CONFLICT)
 
+        # Get AI prediction and queue info
+        try:
+            predicted_wait = waiting_time_predictor.predict_waiting_time(
+                doctor.id, 
+                for_appointment_time=appointment_time
+            )
+            queue_position = Token.objects.filter(
+                doctor=doctor,
+                date=appointment_date,
+                status__in=['waiting', 'confirmed'],
+                appointment_time__lt=appointment_time
+            ).count() + 1
+        except Exception as e:
+            logger.error(f"Prediction failed: {e}")
+            predicted_wait = 10  # Fallback
+            queue_position = 1
+
         if user.patient.phone_number:
             message = (f"Hi {user.patient.name}, your appointment with Dr. {doctor.name} is confirmed for " f"{appointment_date.strftime('%d-%m-%Y')} at {appointment_time.strftime('%I:%M %p')}.")
             try: send_sms_notification(user.patient.phone_number, message)
             except Exception as e: print(f"Failed to send confirmation SMS for new token {new_appointment.id}: {e}")
-        return Response(TokenSerializer(new_appointment).data, status=status.HTTP_201_CREATED)
+        
+        # Return enhanced response with AI predictions
+        response_data = TokenSerializer(new_appointment).data
+        response_data['predicted_waiting_time'] = predicted_wait
+        response_data['queue_position'] = queue_position
+        response_data['message'] = f"Token created! You are #{queue_position} in queue. Estimated wait: {predicted_wait or 'N/A'} minutes"
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 # ====================================================================
 # --- START OF ENHANCEMENT: Date Filtering for Staff/Doctor Queues ---
@@ -766,6 +853,32 @@ class TokenListCreate(generics.ListCreateAPIView):
                     appointment_time=None, status=token_status
                 )
 
+            # Get AI prediction and queue info
+            try:
+                predicted_wait = waiting_time_predictor.predict_waiting_time(
+                    doctor.id, 
+                    for_appointment_time=appointment_time
+                )
+                if appointment_time:
+                    queue_position = Token.objects.filter(
+                        doctor=doctor,
+                        date=today,
+                        status__in=['waiting', 'confirmed'],
+                        appointment_time__lt=appointment_time
+                    ).count() + 1
+                else:
+                    # Walk-in patient
+                    queue_position = Token.objects.filter(
+                        doctor=doctor,
+                        date=today,
+                        status__in=['waiting', 'confirmed'],
+                        created_at__lt=new_token.created_at
+                    ).count() + 1
+            except Exception as e:
+                logger.error(f"Prediction failed: {e}")
+                predicted_wait = 10  # Fallback
+                queue_position = 1
+
             # Send SMS Notification
             message = f"Dear {patient.name}, your token for Dr. {doctor.name} at {doctor.clinic.name} has been confirmed for today."
             if new_token.appointment_time: message += f" Your appointment is at {new_token.appointment_time.strftime('%I:%M %p')}."
@@ -774,7 +887,12 @@ class TokenListCreate(generics.ListCreateAPIView):
             try: send_sms_notification(patient.phone_number, message)
             except Exception as e: print(f"Receptionist: Failed to send confirmation SMS to {patient.phone_number}: {e}")
 
-            return Response(TokenSerializer(new_token).data, status=status.HTTP_201_CREATED)
+            # Return enhanced response with AI predictions
+            response_data = TokenSerializer(new_token).data
+            response_data['predicted_waiting_time'] = predicted_wait
+            response_data['queue_position'] = queue_position
+            response_data['message'] = f"Token created! Queue position: #{queue_position}. Estimated wait: {predicted_wait or 'N/A'} minutes"
+            return Response(response_data, status=status.HTTP_201_CREATED)
 
         except Doctor.DoesNotExist:
             return Response({'error': 'Doctor not found in your clinic'}, status=status.HTTP_404_NOT_FOUND)
@@ -947,20 +1065,28 @@ class PatientHistorySearchView(APIView):
             return Response({'error': 'Phone number parameter is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # Normalize phone number
+            # Normalize phone number for search
             normalized_phone = normalize_phone_number(phone_number)
             matching_patients = []
             
             # Find all patients with matching normalized phone
             for patient in Patient.objects.all():
-                if normalize_phone_number(patient.phone_number) == normalized_phone:
+                patient_normalized = normalize_phone_number(patient.phone_number)
+                if patient_normalized == normalized_phone:
                     matching_patients.append(patient.id)
+            
+            # Also try direct phone number match as fallback
+            if not matching_patients:
+                direct_match = Patient.objects.filter(phone_number=phone_number).first()
+                if direct_match:
+                    matching_patients.append(direct_match.id)
             
             if not matching_patients:
                 return Response({
                     'error': 'Patient not found with this phone number.',
                     'searched_phone': phone_number,
-                    'normalized_phone': normalized_phone
+                    'normalized_phone': normalized_phone,
+                    'message': 'Please check the phone number format and try again.'
                 }, status=status.HTTP_404_NOT_FOUND)
             
             # DOCTOR RESTRICTION: Only allow doctors to search patients they have consulted before
@@ -990,22 +1116,10 @@ class PatientHistorySearchView(APIView):
             primary_patient = Patient.objects.get(id=matching_patients[0])
             serializer = ConsultationSerializer(consultations, many=True)
             
-            # Debug: Log the response data
+            # Return the consultations as a simple list (matching frontend expectation)
             consultation_data = serializer.data
-            print(f"DEBUG: Returning {len(consultation_data)} consultations for phone {phone_number}")
             
-            return Response({
-                'success': True,
-                'consultations': consultation_data,
-                'patient_info': {
-                    'name': primary_patient.name,
-                    'phone_number': primary_patient.phone_number,
-                    'age': primary_patient.age
-                },
-                'total_patients_found': len(matching_patients),
-                'total_consultations': consultations.count(),
-                'message': f'Found {consultations.count()} consultations for {primary_patient.name}'
-            }, status=status.HTTP_200_OK)
+            return Response(consultation_data, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({'error': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -1850,31 +1964,28 @@ class PatientHistorySummaryView(APIView):
     def get(self, request, patient_id):
         """
         Returns a structured JSON summary of the patient's consultation history.
-
-        Behavior:
-        - Lazy-loads the HF summarization pipeline on first use.
-        - Sends the concatenated history with a short instruction that asks the model
-          to output a JSON object with the following keys:
-            - chief_complaint
-            - history_of_present_illness
-            - past_medical_history
-            - medications
-            - allergies
-            - examination_findings
-            - assessment
-            - plan
-        - Attempts to parse JSON out of the model output. If parsing fails, falls back
-          to returning a plain-text summary under the key `summary_text`.
         """
-        global ai_summarizer, ai_model_name
-
         try:
-            # 1. Load model if necessary
-            # Ensure model is loaded (may be loaded in background by admin/dev)
-            if ai_summarizer is None:
-                ok = load_ai_model()
-                if not ok:
-                    return Response({"error": "AI model not available. Trigger load via POST /api/patient-summary/load/ or install model dependencies."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            # 1. Check if AI backend is available and force load if needed
+            from .ai_client import is_model_loaded, summarize_text, get_model_name, load_local_model
+            from django.conf import settings
+            
+            # Force load local model if not loaded and backend is local
+            if not is_model_loaded():
+                backend = getattr(settings, 'AI_BACKEND', 'local')
+                if backend == 'local':
+                    logger.info("AI model not loaded, attempting to load local model...")
+                    success = load_local_model()
+                    if not success:
+                        logger.warning("Failed to load transformers model, using fallback summarizer")
+                        # Use fallback summarizer instead of failing
+                        use_fallback = True
+                    else:
+                        use_fallback = False
+                else:
+                    return Response({"error": "AI model not available. Check configuration."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            else:
+                use_fallback = False
 
             # 2. Fetch consultations
             consultations = Consultation.objects.filter(patient__id=patient_id).order_by('date')
@@ -1888,7 +1999,7 @@ class PatientHistorySummaryView(APIView):
                     full_text.append(f"Date: {consult.date}. Notes: {consult.notes}")
             joined = "\n\n".join(full_text)
 
-            if len(joined.split()) < 30:
+            if len(joined.split()) < 5:
                 return Response({"error": "History too short for AI summarization.", "recent_notes": joined}, status=status.HTTP_400_BAD_REQUEST)
 
             # 4. Build instruction + payload asking for JSON output
@@ -1900,15 +2011,20 @@ class PatientHistorySummaryView(APIView):
             )
             prompt = instruction + "PATIENT_HISTORY:\n" + joined
 
-            # 5. Ask the configured AI backend to summarize.
-            # This will dispatch to local pipeline or a hosted API depending on settings.
-            from .ai_client import summarize_text, get_model_name
-
-            try:
-                result = summarize_text(prompt, max_length=512, min_length=64)
-            except RuntimeError as re:
-                return Response({"error": str(re)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-            # normalize result
+            # 5. Ask the configured AI backend to summarize or use fallback
+            if use_fallback:
+                # Simple extractive summarizer
+                lines = joined.split('\n')
+                medical_lines = [line.strip() for line in lines if line.strip() and any(word in line.lower() for word in ['patient', 'diagnosis', 'treatment', 'medication', 'symptoms'])]
+                summary = ' '.join(medical_lines[:3]) if medical_lines else 'Medical consultation summary available.'
+                result = [{'summary_text': summary}]
+            else:
+                try:
+                    result = summarize_text(prompt, max_length=512, min_length=64)
+                except RuntimeError as re:
+                    return Response({"error": str(re)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # 6. Normalize result
             raw_text = ''
             if isinstance(result, dict):
                 raw_text = result.get('summary_text', '')
@@ -1916,9 +2032,10 @@ class PatientHistorySummaryView(APIView):
                 raw_text = result[0].get('summary_text', '')
             else:
                 raw_text = str(result)
-            ai_model_name = get_model_name()
+            
+            model_name = get_model_name() if not use_fallback else 'fallback_extractive_summarizer'
 
-            # 6. Try to extract JSON from the returned text
+            # 7. Try to extract JSON from the returned text
             import re, json
             # Find first {...} block
             m = re.search(r"\{[\s\S]*\}", raw_text)
@@ -1934,17 +2051,17 @@ class PatientHistorySummaryView(APIView):
                     structured = {k: (parsed.get(k, '') if isinstance(parsed.get(k, ''), str) else parsed.get(k, '')) for k in keys}
                     # Also include a short raw summary for convenience
                     structured['raw_summary'] = raw_text
-                    structured['model'] = ai_model_name
+                    structured['model'] = model_name
                     return Response(structured)
                 except Exception:
                     # fall through to text fallback
                     pass
 
-            # 7. Fallback: return plain text summary
-            return Response({"summary_text": raw_text, "model": ai_model_name})
+            # 8. Fallback: return plain text summary
+            return Response({"summary_text": raw_text, "model": model_name})
 
         except Exception as e:
-            print(f"AI ERROR: {str(e)}")
+            logger.error(f"AI Summary Error: {str(e)}")
             return Response({"error": str(e)}, status=500)
 # --- ADD THIS TO THE BOTTOM OF api/views.py ---
  
@@ -1972,22 +2089,35 @@ class AIModelLoadView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        from .ai_client import is_model_loaded, load_local_model, load_model_background, get_model_name
+        from .ai_client import is_model_loaded, get_model_name
+        
+        # For local backend, try to load the model
+        from django.conf import settings
+        backend = getattr(settings, 'AI_BACKEND', 'local')
+        
+        if backend == 'local':
+            from .ai_client import load_local_model, load_model_background
+            
+            # If model already loaded, return ready
+            if is_model_loaded():
+                return Response({'loaded': True, 'model': get_model_name()})
 
-        # If model/backend already reported as available, return ready
-        if is_model_loaded():
-            return Response({'loaded': True, 'model': get_model_name()})
+            background = request.query_params.get('background', '0') in ['1', 'true', 'True']
+            if background:
+                load_model_background()
+                return Response({'message': 'AI model loading started in background.'}, status=status.HTTP_202_ACCEPTED)
 
-        background = request.query_params.get('background', '0') in ['1', 'true', 'True']
-        if background:
-            load_model_background()
-            return Response({'message': 'AI model loading started in background.'}, status=status.HTTP_202_ACCEPTED)
-
-        ok = load_local_model()
-        if ok:
-            return Response({'loaded': True, 'model': get_model_name()})
+            ok = load_local_model()
+            if ok:
+                return Response({'loaded': True, 'model': get_model_name()})
+            else:
+                return Response({'error': 'Failed to load AI model. Check logs.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         else:
-            return Response({'error': 'Failed to load AI model. Check logs.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # For hosted backends, just check if credentials are available
+            if is_model_loaded():
+                return Response({'loaded': True, 'model': get_model_name()})
+            else:
+                return Response({'error': 'AI backend not properly configured.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class AIHistorySummaryView(APIView):

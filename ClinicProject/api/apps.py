@@ -6,4 +6,5 @@ class ApiConfig(AppConfig):
     name = 'api'
     
     def ready(self):
-        pass  # Schedule is now managed manually
+        # Import signals to enable automatic training triggers
+        import api.auto_training_triggers
