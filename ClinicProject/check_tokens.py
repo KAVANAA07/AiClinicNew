@@ -1,24 +1,36 @@
-from api.models import Patient, Token
-from api.views import normalize_phone_number
+import os
+import django
+
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'clinic_token_system.settings')
+django.setup()
+
+from api.models import Token, Patient
 from django.utils import timezone
 
-# Check for tokens with normalized phone matching
-target_phone = '8217612080'
-patients = []
-for p in Patient.objects.all():
-    if normalize_phone_number(p.phone_number) == target_phone:
-        patients.append(p)
+today = timezone.now().date()
 
-print(f'Matching patients: {len(patients)}')
+print('=== ALL TOKENS ===')
+tokens = Token.objects.all()
+print(f'Total tokens: {tokens.count()}')
+for t in tokens:
+    print(f'Token {t.id}: Patient={t.patient.name}, Phone={t.patient.phone_number}, Date={t.date}, Status={t.status}, Appt={t.appointment_time}')
+
+print('\n=== ACTIVE TOKENS (not completed/cancelled) ===')
+active = Token.objects.exclude(status__in=['completed', 'cancelled'])
+print(f'Active tokens: {active.count()}')
+for t in active:
+    print(f'Token {t.id}: Patient={t.patient.name}, Phone={t.patient.phone_number}, Date={t.date}, Status={t.status}')
+
+print('\n=== TODAY OR FUTURE ACTIVE TOKENS ===')
+future_active = Token.objects.filter(
+    date__gte=today,
+    status__in=['waiting', 'confirmed']
+)
+print(f'Future active tokens: {future_active.count()}')
+for t in future_active:
+    print(f'Token {t.id}: Patient={t.patient.name}, Phone={t.patient.phone_number}, Date={t.date}, Status={t.status}')
+
+print('\n=== ALL PATIENTS ===')
+patients = Patient.objects.all()
 for p in patients:
-    print(f'  Patient {p.id}: {p.name} ({p.phone_number})')
-
-if patients:
-    tokens = Token.objects.filter(
-        patient__in=patients, 
-        date__gte=timezone.now().date()
-    ).exclude(status__in=['completed', 'cancelled'])
-    
-    print(f'Active tokens: {len(tokens)}')
-    for t in tokens:
-        print(f'  Token {t.id}: {t.date} {t.appointment_time} - {t.status}')
+    print(f'Patient {p.id}: Name={p.name}, Phone={p.phone_number}, User={p.user_id}')

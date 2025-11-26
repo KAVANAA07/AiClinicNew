@@ -1,0 +1,207 @@
+.doctor-dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.dashboard-header {
+  text-align: center;
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid #e9ecef;
+}
+
+.dashboard-header h1 {
+  margin: 0 0 10px 0;
+  color: #333;
+  font-size: 28px;
+}
+
+.dashboard-header p {
+  margin: 0;
+  color: #666;
+  font-size: 16px;
+}
+
+.tokens-section h2 {
+  margin: 0 0 20px 0;
+  color: #333;
+  font-size: 22px;
+}
+
+.loading {
+  text-align: center;
+  padding: 50px;
+  font-size: 18px;
+  color: #666;
+}
+
+.no-tokens {
+  text-align: center;
+  padding: 40px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e9ecef;
+}
+
+.no-tokens p {
+  margin: 0;
+  color: #666;
+  font-size: 16px;
+}
+
+.tokens-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 20px;
+}
+
+.token-card {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.token-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.token-card.waiting {
+  border-left: 4px solid #ffc107;
+}
+
+.token-card.confirmed {
+  border-left: 4px solid #17a2b8;
+}
+
+.token-card.in_consultancy {
+  border-left: 4px solid #28a745;
+}
+
+.token-card.completed {
+  border-left: 4px solid #6c757d;
+  opacity: 0.7;
+}
+
+.token-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.token-header h3 {
+  margin: 0;
+  color: #333;
+  font-size: 18px;
+}
+
+.status-badge {
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.status-badge.waiting {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-badge.confirmed {
+  background: #d1ecf1;
+  color: #0c5460;
+}
+
+.status-badge.in_consultancy {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status-badge.completed {
+  background: #d6d8db;
+  color: #383d41;
+}
+
+.token-details {
+  margin-bottom: 15px;
+}
+
+.token-details p {
+  margin: 5px 0;
+  font-size: 14px;
+  color: #555;
+}
+
+.token-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.start-btn {
+  background: #28a745;
+  color: white;
+}
+
+.start-btn:hover {
+  background: #218838;
+}
+
+.complete-btn {
+  background: #007bff;
+  color: white;
+}
+
+.complete-btn:hover {
+  background: #0056b3;
+}
+
+.skip-btn {
+  background: #6c757d;
+  color: white;
+}
+
+.skip-btn:hover {
+  background: #5a6268;
+}
+
+@media (max-width: 768px) {
+  .doctor-dashboard {
+    padding: 15px;
+  }
+  
+  .tokens-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .token-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  
+  .token-actions {
+    justify-content: stretch;
+  }
+  
+  .action-btn {
+    flex: 1;
+    text-align: center;
+  }
+}

@@ -8,10 +8,6 @@ const SmartQueueDashboard = ({ user, token }) => {
 
   useEffect(() => {
     fetchQueueData();
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchQueueData, 30000);
-    return () => clearInterval(interval);
   }, []);
 
   const fetchQueueData = async () => {
@@ -26,7 +22,13 @@ const SmartQueueDashboard = ({ user, token }) => {
       
       if (queueResponse.ok) {
         const queueData = await queueResponse.json();
-        setQueueData(queueData);
+        setQueueData(prevData => {
+          // Only update if data actually changed
+          if (JSON.stringify(prevData) !== JSON.stringify(queueData)) {
+            return queueData;
+          }
+          return prevData;
+        });
       }
 
       // Fetch clinic overview
@@ -39,7 +41,13 @@ const SmartQueueDashboard = ({ user, token }) => {
       
       if (overviewResponse.ok) {
         const overviewData = await overviewResponse.json();
-        setClinicOverview(overviewData);
+        setClinicOverview(prevData => {
+          // Only update if data actually changed
+          if (JSON.stringify(prevData) !== JSON.stringify(overviewData)) {
+            return overviewData;
+          }
+          return prevData;
+        });
       }
       
     } catch (error) {

@@ -189,9 +189,10 @@ class RealTimeQueueManager:
             if not RealTimeQueueManager._can_arrive_early(token):
                 return False, "Cannot arrive early at this time"
             
-            # Update token status
+            # Update token status with manual confirmation flag
             token.status = 'confirmed'
             token.arrival_confirmed_at = timezone.now()
+            token._allow_status_change = True  # Flag for manual early arrival activation
             token.save()
             
             # Send notification
@@ -202,7 +203,7 @@ class RealTimeQueueManager:
             # Notify other patients about queue movement
             RealTimeQueueManager._notify_queue_update(token.doctor.id)
             
-            return True, "Early arrival activated"
+            return True, "Early arrival activated - patient confirmed"
             
         except Token.DoesNotExist:
             return False, "Token not found"

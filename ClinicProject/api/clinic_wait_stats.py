@@ -18,7 +18,7 @@ class ClinicWaitStats:
                 status='completed',
                 completed_at__isnull=False,
                 appointment_time__isnull=False,
-                appointment_date__gte=timezone.now().date() - timedelta(days=30)
+                date__gte=timezone.now().date() - timedelta(days=30)
             )
             
             if not tokens.exists():
@@ -28,7 +28,7 @@ class ClinicWaitStats:
             count = 0
             
             for token in tokens:
-                expected = datetime.combine(token.appointment_date, token.appointment_time)
+                expected = timezone.make_aware(datetime.combine(token.date, token.appointment_time))
                 actual = token.completed_at
                 wait_time = (actual - expected).total_seconds() / 60
                 
@@ -51,7 +51,7 @@ class ClinicWaitStats:
                 status='completed',
                 completed_at__isnull=False,
                 appointment_time__isnull=False,
-                appointment_date__gte=timezone.now().date() - timedelta(days=30)
+                date__gte=timezone.now().date() - timedelta(days=30)
             )
             
             if not tokens.exists():
@@ -61,7 +61,7 @@ class ClinicWaitStats:
             count = 0
             
             for token in tokens:
-                expected = datetime.combine(token.appointment_date, token.appointment_time)
+                expected = timezone.make_aware(datetime.combine(token.date, token.appointment_time))
                 actual = token.completed_at
                 wait_time = (actual - expected).total_seconds() / 60
                 
@@ -83,18 +83,18 @@ class ClinicWaitStats:
             
             total_today = Token.objects.filter(
                 doctor_id=doctor_id,
-                appointment_date=today
+                date=today
             ).count()
             
             completed_today = Token.objects.filter(
                 doctor_id=doctor_id,
-                appointment_date=today,
+                date=today,
                 status='completed'
             ).count()
             
             pending_today = Token.objects.filter(
                 doctor_id=doctor_id,
-                appointment_date=today,
+                date=today,
                 status__in=['confirmed', 'in_progress']
             ).count()
             

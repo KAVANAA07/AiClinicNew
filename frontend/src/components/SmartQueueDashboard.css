@@ -3,6 +3,7 @@
   max-width: 1400px;
   margin: 0 auto;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  transition: opacity 0.2s ease-in-out;
 }
 
 .smart-queue-loading {
@@ -163,6 +164,7 @@
   border-radius: 6px;
   margin-bottom: 10px;
   border-left: 4px solid #3498db;
+  transition: all 0.3s ease-in-out;
 }
 
 .patient-details {
@@ -247,6 +249,7 @@
   font-size: 32px;
   font-weight: bold;
   color: #2c3e50;
+  transition: all 0.3s ease-in-out;
 }
 
 /* Doctor Status */

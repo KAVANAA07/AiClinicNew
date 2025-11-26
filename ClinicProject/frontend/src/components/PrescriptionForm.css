@@ -1,0 +1,170 @@
+.prescription-form {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+}
+
+.form-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.form-row input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.timing-section {
+  margin-bottom: 20px;
+}
+
+.timing-section h4 {
+  margin-bottom: 10px;
+  color: #333;
+}
+
+.timing-buttons {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.timing-buttons button {
+  padding: 8px 16px;
+  border: 2px solid #007bff;
+  background: white;
+  color: #007bff;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.timing-buttons button.active {
+  background: #007bff;
+  color: white;
+}
+
+.timing-buttons button:hover {
+  background: #0056b3;
+  color: white;
+}
+
+.custom-timing {
+  background: #f8f9fa;
+  padding: 15px;
+  border-radius: 4px;
+  border: 1px solid #e9ecef;
+}
+
+.timing-checkboxes {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 15px;
+}
+
+.timing-checkboxes label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.custom-times {
+  display: flex;
+  gap: 10px;
+}
+
+.custom-times input {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.food-timing-section {
+  margin-bottom: 20px;
+}
+
+.food-timing-section h4 {
+  margin-bottom: 10px;
+  color: #333;
+}
+
+.food-timing-grid {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.food-timing-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.food-timing-item label {
+  font-weight: 500;
+  min-width: 80px;
+}
+
+.food-timing-item select {
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+}
+
+.instructions-section {
+  margin-bottom: 20px;
+}
+
+.instructions-section textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.add-prescription-btn {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 16px;
+  transition: background 0.2s;
+}
+
+.add-prescription-btn:hover {
+  background: #218838;
+}
+
+.prescription-preview {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  padding: 15px;
+  margin-bottom: 20px;
+}
+
+.prescription-preview h4 {
+  margin: 0 0 10px 0;
+  color: #495057;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.preview-text {
+  margin: 0;
+  font-style: italic;
+  color: #6c757d;
+  line-height: 1.4;
+}

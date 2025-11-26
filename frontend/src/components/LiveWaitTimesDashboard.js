@@ -11,8 +11,6 @@ const LiveWaitTimesDashboard = () => {
 
   useEffect(() => {
     fetchDashboardData();
-    const interval = setInterval(fetchDashboardData, 30000); // Update every 30 seconds
-    return () => clearInterval(interval);
   }, [selectedDoctor]);
 
   const fetchDashboardData = async () => {
@@ -20,9 +18,29 @@ const LiveWaitTimesDashboard = () => {
       const response = await axios.get('/api/live-dashboard-overview/');
       if (response.data.success) {
         const { dashboard } = response.data;
-        setClinicOverview(dashboard.clinic_overview);
-        setDoctorsStatus(dashboard.doctors_status);
-        setLiveData(dashboard.live_wait_times);
+        
+        // Only update if data actually changed to prevent unnecessary re-renders
+        setClinicOverview(prevData => {
+          if (JSON.stringify(prevData) !== JSON.stringify(dashboard.clinic_overview)) {
+            return dashboard.clinic_overview;
+          }
+          return prevData;
+        });
+        
+        setDoctorsStatus(prevData => {
+          if (JSON.stringify(prevData) !== JSON.stringify(dashboard.doctors_status)) {
+            return dashboard.doctors_status;
+          }
+          return prevData;
+        });
+        
+        setLiveData(prevData => {
+          if (JSON.stringify(prevData) !== JSON.stringify(dashboard.live_wait_times)) {
+            return dashboard.live_wait_times;
+          }
+          return prevData;
+        });
+        
         setLastUpdated(new Date(dashboard.last_updated));
       }
     } catch (error) {

@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
+from datetime import time
 
 class State(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -143,6 +144,17 @@ class Token(models.Model):
 
             self.token_number = str(last_token_num + 1)
 
+        # STRICT PREVENTION OF AUTOMATIC CONFIRMATION
+        # Only allow confirmation through manual user action or receptionist action
+        if self.pk and self.status == 'confirmed':
+            old_instance = Token.objects.filter(pk=self.pk).first()
+            if old_instance and old_instance.status != 'confirmed':
+                # Check if this is a manual confirmation (has the special flag)
+                if not hasattr(self, '_manual_confirmation_allowed'):
+                    # Prevent automatic confirmation - revert to original status
+                    self.status = old_instance.status
+                    print(f"BLOCKED automatic confirmation for token {self.pk}. Status reverted to {self.status}")
+
         if self.status == 'completed' and self.completed_at is None:
             self.completed_at = timezone.now()
 
@@ -173,6 +185,20 @@ class DoctorSchedule(models.Model):
 
 
 class PrescriptionItem(models.Model):
+    TIMING_CHOICES = [
+        ('M', 'Morning'),
+        ('A', 'Afternoon'), 
+        ('N', 'Night'),
+        ('frequency', 'Times Per Day'),
+        ('custom', 'Custom Times')
+    ]
+    
+    FOOD_TIMING_CHOICES = [
+        ('before', 'Before Food'),
+        ('after', 'After Food'),
+        ('with', 'With Food')
+    ]
+    
     consultation = models.ForeignKey(
         Consultation,
         related_name='prescription_items',
@@ -181,9 +207,126 @@ class PrescriptionItem(models.Model):
     medicine_name = models.CharField(max_length=200)
     dosage = models.CharField(max_length=100)
     duration_days = models.IntegerField()
-    timing_morning = models.BooleanField(default=False)
+    
+    # Timing selection - defaults to M,A,N
+    timing_type = models.CharField(max_length=10, choices=TIMING_CHOICES, default='M')
+    
+    # Frequency per day (for timing_type='frequency')
+    frequency_per_day = models.IntegerField(default=1, help_text="Number of times per day")
+    
+    # Standard timing flags
+    timing_morning = models.BooleanField(default=True)
     timing_afternoon = models.BooleanField(default=False)
     timing_evening = models.BooleanField(default=False)
+    timing_night = models.BooleanField(default=False)
+    
+    # Dynamic timing fields for frequency-based prescriptions
+    timing_1_time = models.TimeField(null=True, blank=True)
+    timing_2_time = models.TimeField(null=True, blank=True)
+    timing_3_time = models.TimeField(null=True, blank=True)
+    timing_4_time = models.TimeField(null=True, blank=True)
+    timing_5_time = models.TimeField(null=True, blank=True)
+    timing_6_time = models.TimeField(null=True, blank=True)
+    timing_7_time = models.TimeField(null=True, blank=True)
+    timing_8_time = models.TimeField(null=True, blank=True)
+    
+    timing_1_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_2_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_3_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_4_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_5_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_6_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_7_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    timing_8_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, blank=True)
+    
+    # Custom timing fields (only used when timing_type='custom')
+    morning_time = models.TimeField(null=True, blank=True, help_text="Custom morning time")
+    afternoon_time = models.TimeField(null=True, blank=True, help_text="Custom afternoon time")
+    evening_time = models.TimeField(null=True, blank=True, help_text="Custom evening time")
+    night_time = models.TimeField(null=True, blank=True, help_text="Custom night time")
+    
+    # Food timing for each dose
+    morning_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, default='after')
+    afternoon_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, default='after')
+    evening_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, default='after')
+    night_food = models.CharField(max_length=10, choices=FOOD_TIMING_CHOICES, default='after')
+    
+    # Special instructions
+    special_instructions = models.TextField(blank=True, help_text="Additional instructions")
+
+    def get_natural_description(self):
+        """Generate natural language description"""
+        if self.timing_type == 'frequency':
+            times_list = []
+            for i in range(1, self.frequency_per_day + 1):
+                time_field = getattr(self, f'timing_{i}_time', None)
+                food_field = getattr(self, f'timing_{i}_food', None)
+                
+                time_info = f" at {time_field.strftime('%I:%M %p')}" if time_field else ""
+                food_info = f" {food_field} food" if food_field else ""
+                times_list.append(f"dose {i}{time_info}{food_info}")
+            
+            timing_str = ", ".join(times_list) if times_list else f"{self.frequency_per_day} times per day"
+            description = f"{self.medicine_name} {self.dosage} - {timing_str} for {self.duration_days} days"
+        else:
+            times = []
+            
+            if self.timing_morning:
+                if self.timing_type == 'custom' and self.morning_time:
+                    time_info = f" at {self.morning_time.strftime('%I:%M %p')}"
+                else:
+                    time_info = ""
+                food_info = f" {self.morning_food} food" if self.morning_food else ""
+                times.append(f"1 morning{time_info}{food_info}")
+                
+            if self.timing_afternoon:
+                if self.timing_type == 'custom' and self.afternoon_time:
+                    time_info = f" at {self.afternoon_time.strftime('%I:%M %p')}"
+                else:
+                    time_info = ""
+                food_info = f" {self.afternoon_food} food" if self.afternoon_food else ""
+                times.append(f"1 afternoon{time_info}{food_info}")
+                
+            if self.timing_evening:
+                if self.timing_type == 'custom' and self.evening_time:
+                    time_info = f" at {self.evening_time.strftime('%I:%M %p')}"
+                else:
+                    time_info = ""
+                food_info = f" {self.evening_food} food" if self.evening_food else ""
+                times.append(f"1 evening{time_info}{food_info}")
+                
+            if self.timing_night:
+                if self.timing_type == 'custom' and self.night_time:
+                    time_info = f" at {self.night_time.strftime('%I:%M %p')}"
+                else:
+                    time_info = ""
+                food_info = f" {self.night_food} food" if self.night_food else ""
+                times.append(f"1 night{time_info}{food_info}")
+            
+            timing_str = " and ".join(times) if times else "as needed"
+            description = f"{self.medicine_name} {self.dosage} - {timing_str} for {self.duration_days} days"
+        
+        if self.special_instructions:
+            description += f". {self.special_instructions}"
+        
+        return description
 
     def __str__(self):
         return f"{self.medicine_name} for Consultation {self.consultation.id}"
+
+class PrescriptionReminder(models.Model):
+    prescription = models.ForeignKey(
+        PrescriptionItem,
+        on_delete=models.CASCADE,
+        related_name='reminders'
+    )
+    reminder_time = models.TimeField()
+    sent_date = models.DateField()
+    dose_info = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ['prescription', 'reminder_time', 'sent_date']
+    
+    def __str__(self):
+        return f"Reminder for {self.prescription.medicine_name} at {self.reminder_time}"

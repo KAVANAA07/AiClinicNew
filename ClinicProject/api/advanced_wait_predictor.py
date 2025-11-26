@@ -51,10 +51,7 @@ class AdvancedWaitPredictor:
         try:
             prediction = self.ml_predictor.predict_waiting_time(
                 doctor_id=token.doctor.id,
-                appointment_time=token.appointment_time,
-                appointment_date=token.date,
-                patient_age=getattr(token.patient, 'age', 30),
-                is_followup=getattr(token, 'is_followup', False)
+                for_appointment_time=token.appointment_time
             )
             return prediction
         except Exception as e:
@@ -85,7 +82,9 @@ class AdvancedWaitPredictor:
             expected_time = datetime.combine(completed_token.date, completed_token.appointment_time)
             actual_time = completed_token.completed_at
             
-            # Calculate delay in minutes
+            # Calculate delay in minutes (ensure both are timezone-aware)
+            if expected_time.tzinfo is None:
+                expected_time = timezone.make_aware(expected_time)
             delay = (actual_time - expected_time).total_seconds() / 60
             total_delay += delay
             count += 1
@@ -143,6 +142,8 @@ class AdvancedWaitPredictor:
         delays = []
         for hist_token in historical_tokens:
             expected = datetime.combine(hist_token.date, hist_token.appointment_time)
+            if expected.tzinfo is None:
+                expected = timezone.make_aware(expected)
             actual = hist_token.completed_at
             delay = (actual - expected).total_seconds() / 60
             delays.append(delay)
@@ -230,6 +231,8 @@ class AdvancedWaitPredictor:
             total_delay = 0
             for token in completed_tokens:
                 expected = datetime.combine(token.date, token.appointment_time)
+                if expected.tzinfo is None:
+                    expected = timezone.make_aware(expected)
                 actual = token.completed_at
                 delay = (actual - expected).total_seconds() / 60
                 total_delay += delay

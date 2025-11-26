@@ -54,7 +54,7 @@ const QueueStatusBar = ({ doctorId }) => {
   useEffect(() => {
     if (doctorId) {
       fetchQueueStats();
-      const interval = setInterval(fetchQueueStats, 60000); // Refresh every minute
+      const interval = setInterval(fetchQueueStats, 60000);
       return () => clearInterval(interval);
     }
   }, [doctorId, fetchQueueStats]);

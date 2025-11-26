@@ -128,22 +128,20 @@ class SmartQueueAnalytics:
                 time_until_appointment = (appointment_datetime - now).total_seconds() / 60
                 
                 if 0 <= time_until_appointment <= 30:
-                    # Activate early arrival
-                    next_patient.status = 'confirmed'
-                    next_patient.arrival_confirmed_at = now
-                    next_patient.save()
+                    # DO NOT auto-confirm - only send notification
+                    # Patient must still manually confirm arrival with GPS
                     
-                    # Send notification
+                    # Send notification - patient still needs GPS confirmation
                     if next_patient.patient.phone_number:
-                        message = f"Good news! Dr. {doctor.name} is ready early. You can come now for your {next_patient.appointment_time.strftime('%I:%M %p')} appointment."
+                        message = f"Good news! Dr. {doctor.name} is ready early. You can arrive now for your {next_patient.appointment_time.strftime('%I:%M %p')} appointment. Please confirm arrival with GPS when you reach the clinic."
                         try:
                             send_sms_notification(next_patient.patient.phone_number, message)
                             activated_count += 1
-                            logger.info(f"Early arrival activated for token {next_patient.id}")
+                            logger.info(f"Early arrival notification sent for token {next_patient.id} - GPS confirmation still required")
                         except Exception as e:
                             logger.error(f"Failed to send early arrival SMS: {e}")
         
-        return activated_count
+        return activated_count  # Note: This counts notifications sent, not auto-confirmations
 
 @receiver(post_save, sender=Token)
 def handle_token_completion(sender, instance, **kwargs):

@@ -10,6 +10,11 @@ def send_sms_notification(to_number, message):
     """
     Sends real SMS via Twilio or simulates if credentials not configured.
     """
+    # Clean phone number - remove spaces and ensure proper format
+    to_number = str(to_number).strip().replace(' ', '')
+    if not to_number.startswith('+'):
+        to_number = '+' + to_number
+    
     # Check if real Twilio credentials are configured
     if (settings.TWILIO_ACCOUNT_SID != 'ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' and 
         settings.TWILIO_AUTH_TOKEN != 'your_auth_token'):

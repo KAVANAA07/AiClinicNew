@@ -10,13 +10,6 @@ const EnhancedDashboard = ({ user, token }) => {
   useEffect(() => {
     fetchDashboardData();
     fetchInsights();
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(() => {
-      fetchDashboardData();
-    }, 30000);
-    
-    return () => clearInterval(interval);
   }, []);
 
   const fetchDashboardData = async () => {
@@ -30,7 +23,13 @@ const EnhancedDashboard = ({ user, token }) => {
       
       if (response.ok) {
         const data = await response.json();
-        setDashboardData(data);
+        setDashboardData(prevData => {
+          // Only update if data actually changed to prevent unnecessary re-renders
+          if (JSON.stringify(prevData) !== JSON.stringify(data)) {
+            return data;
+          }
+          return prevData;
+        });
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);

@@ -11,6 +11,8 @@ import LiveQueueWidget from './components/LiveQueueWidget';
 import MedicalSummary from './components/MedicalSummary';
 
 import medqLogo from './logo.jpg'; // Assuming logo.png is in the src folder
+// Import Enhanced Components
+import EnhancedConsultationForm from './components/EnhancedConsultationForm';
 
 // --- API Configuration ---
 const apiClient = axios.create({
@@ -433,9 +435,11 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
     const [showMedicalSummary, setShowMedicalSummary] = useState(false);
     const [medicalSummaryPhone, setMedicalSummaryPhone] = useState('');
 
-    const fetchQueue = useCallback(async () => {
-        setError(''); 
-        setLoading(true);
+    const fetchQueue = useCallback(async (silent = false) => {
+        if (!silent) {
+            setError(''); 
+            setLoading(true);
+        }
         try { 
             console.log('Fetching doctor queue...');
             const response = await apiClient.get('/tokens/'); 
@@ -443,20 +447,26 @@ const DoctorDashboardComponent = ({ loggedInUser, onLogout, onSelectPatient, onV
             console.log('Response type:', typeof response.data, 'Is array:', Array.isArray(response.data));
             setQueue(Array.isArray(response.data) ? response.data : []); 
         } catch (err) { 
-            setError('Could not fetch your patient queue.'); 
+            if (!silent) {
+                setError('Could not fetch your patient queue.'); 
+            }
             console.error("Fetch queue error:", err);
             console.error("Error response:", err.response);
             console.error("Error status:", err.response?.status);
             console.error("Error data:", err.response?.data);
             setQueue([]);
         } finally {
-            setLoading(false);
+            if (!silent) {
+                setLoading(false);
+            }
         }
     }, []);
 
     useEffect(() => {
         fetchQueue();
-        const interval = setInterval(fetchQueue, 5000); 
+        const interval = setInterval(() => {
+            fetchQueue(true);
+        }, 5000);
         return () => clearInterval(interval);
     }, [fetchQueue]);
 
@@ -876,13 +886,6 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [notes, setNotes] = useState('');
-    const [saveError, setSaveError] = useState(''); 
-    const [isSaving, setIsSaving] = useState(false); 
-    
-    const [prescriptionItems, setPrescriptionItems] = useState([
-        { medicine_name: '', dosage: '', duration_days: '', timing_morning: false, timing_afternoon: false, timing_evening: false }
-    ]);
 
     const fetchHistory = useCallback(async () => {
         if (!patient) return;
@@ -898,72 +901,13 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
 
     useEffect(() => { fetchHistory(); }, [fetchHistory]);
 
-    const handlePrescriptionChange = (index, event) => {
-        const values = [...prescriptionItems];
-        const { name, value, type, checked } = event.target;
-        values[index][name] = type === 'checkbox' ? checked : value;
-        setPrescriptionItems(values);
-    };
-
-    const handleAddPrescriptionRow = () => {
-        setPrescriptionItems([...prescriptionItems, { medicine_name: '', dosage: '', duration_days: '', timing_morning: false, timing_afternoon: false, timing_evening: false }]);
-    };
-    
-    const handleRemovePrescriptionRow = (index) => {
-        if (prescriptionItems.length > 1) { 
-            const values = [...prescriptionItems];
-            values.splice(index, 1);
-            setPrescriptionItems(values);
-        }
-    };
-
-    const handleSaveConsultation = async (e) => {
-        e.preventDefault();
-        setSaveError(''); 
-        setIsSaving(true); 
-
-        const validPrescriptionItems = prescriptionItems.filter(item => 
-             item.medicine_name.trim() || item.dosage.trim() || item.duration_days.trim()
-        );
-
-        let prescriptionIsValid = true;
-        validPrescriptionItems.forEach(item => {
-             if (!item.medicine_name.trim() || !item.dosage.trim() || !item.duration_days.trim()) {
-                 prescriptionIsValid = false;
-             }
-             if (isNaN(parseInt(item.duration_days)) || parseInt(item.duration_days) <= 0) {
-                  prescriptionIsValid = false;
-             }
-        });
-
-        if (!notes.trim()) {
-             setSaveError('Consultation notes cannot be empty.');
-             setIsSaving(false);
-             return;
-        }
-
-        if (!prescriptionIsValid && validPrescriptionItems.length > 0) {
-            setSaveError('Please fill in Medicine Name, Dosage, and a valid number of Days for all added prescription items.');
-            setIsSaving(false);
-            return;
-        }
-
-        const payload = {
-            patient: patient.id,
-            notes: notes.trim(),
-            prescription_items: validPrescriptionItems.map(item => ({
-                 ...item,
-                 duration_days: parseInt(item.duration_days) 
-            })) 
-        };
-
+    const handleSaveConsultation = async (consultationData) => {
         try {
-            await apiClient.post('/consultations/create/', payload);
+            await apiClient.post('/consultations/create/', consultationData);
             onBack(); 
         } catch (err) {
-            setSaveError(err.response?.data?.error || 'Failed to save consultation.');
             console.error("Save consultation error:", err.response || err);
-            setIsSaving(false); 
+            throw err; // Let EnhancedConsultationForm handle the error
         }
     };
 
@@ -971,12 +915,11 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
         <div className="dashboard-container">
             <header className="dashboard-header">
                  <h1>Consultation: {patient?.name || 'Loading...'} (Age: {patient?.age || 'N/A'})</h1>
-                 <button onClick={onBack} className="logout-button" disabled={isSaving}>Back to Dashboard</button>
+                 <button onClick={onBack} className="logout-button">Back to Dashboard</button>
             </header>
             <div className="consultation-content">
                 <div className="card history-card">
                     <h2>Patient History</h2>
-                    {/* <-- ADDED: AI Summary component so doctor can summarize a patient's history */}
                     {patient && (
                         <PatientAISummary patientId={patient.id} token={localStorage.getItem('authToken')} />)}
 
@@ -994,10 +937,7 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
                                         <ul className="prescription-detail-list">
                                             {c.prescription_items.map(item => (
                                                 <li key={item.id}>
-                                                     {item.medicine_name} - {item.dosage} ({item.duration_days} days)
-                                                     <small style={{marginLeft: '10px', color: 'var(--dark-gray)'}}>
-                                                          ({item.timing_morning ? 'M' : ''}{item.timing_afternoon ? 'A' : ''}{item.timing_evening ? 'E' : ''})
-                                                     </small>
+                                                     {item.natural_description || `${item.medicine_name} - ${item.dosage} (${item.duration_days} days)`}
                                                 </li>
                                             ))}
                                         </ul>
@@ -1007,45 +947,13 @@ const ConsultationComponent = ({ patient, doctor, onBack }) => {
                         ))}</ul>
                     ) : (<p>No past consultations found for this patient.</p>))}
                 </div>
-                <div className="card form-card">
-                    <h2>Add New Consultation</h2>
-                    <form onSubmit={handleSaveConsultation}>
-                        <div className="input-group">
-                            <label>Consultation Notes</label>
-                            <textarea rows="5" value={notes} onChange={(e) => setNotes(e.target.value)} required disabled={isSaving}></textarea>
-                        </div>
-                        
-                        <h3>Prescription</h3>
-                        {prescriptionItems.map((item, index) => (
-                            <div className="prescription-row" key={index}>
-                                <input type="text" name="medicine_name" placeholder="Medicine Name" value={item.medicine_name} onChange={e => handlePrescriptionChange(index, e)} className="presc-input-med" disabled={isSaving} />
-                                <input type="text" name="dosage" placeholder="Dosage (e.g., 1 tablet)" value={item.dosage} onChange={e => handlePrescriptionChange(index, e)} className="presc-input-short" disabled={isSaving} />
-                                <input type="number" name="duration_days" placeholder="Days" value={item.duration_days} onChange={e => handlePrescriptionChange(index, e)} className="presc-input-short" min="1" disabled={isSaving}/> {/* Added min="1" */}
-                                <div className="timing-checkboxes">
-                                    <label title="Morning"><input type="checkbox" name="timing_morning" checked={item.timing_morning} onChange={e => handlePrescriptionChange(index, e)} disabled={isSaving} /> M</label>
-                                    <label title="Afternoon"><input type="checkbox" name="timing_afternoon" checked={item.timing_afternoon} onChange={e => handlePrescriptionChange(index, e)} disabled={isSaving} /> A</label>
-                                    <label title="Evening"><input type="checkbox" name="timing_evening" checked={item.timing_evening} onChange={e => handlePrescriptionChange(index, e)} disabled={isSaving} /> E</label>
-                                </div>
-                                {prescriptionItems.length > 1 && 
-                                    <button 
-                                            type="button" 
-                                            onClick={() => handleRemovePrescriptionRow(index)} 
-                                            className="remove-button"
-                                            title="Remove this item"
-                                            disabled={isSaving}>×</button>
-                                }
-                                {prescriptionItems.length <= 1 && <div style={{width: '30px'}}></div>} 
-                            </div>
-                        ))}
-                        <button type="button" onClick={handleAddPrescriptionRow} className="secondary-button add-med-button" disabled={isSaving}>Add Another Medicine</button>
-                        
-                        {saveError && <p className="error-message">{saveError}</p>}
-                        
-                        <button type="submit" className="primary-button save-consult-button" disabled={isSaving}>
-                             {isSaving ? 'Saving...' : 'Save & Complete Appointment'}
-                        </button>
-                    </form>
-                </div>
+                
+                {/* Use Enhanced Consultation Form */}
+                <EnhancedConsultationForm 
+                    patient={patient}
+                    onSave={handleSaveConsultation}
+                    onCancel={onBack}
+                />
             </div>
         </div>
     );
@@ -1137,13 +1045,15 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
     const ClinicIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m0 0v12m0-12L3 15" /></svg>;
     const StatusIcon = () => <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
     
-    const fetchTodaysToken = useCallback(async () => { try { const response = await apiClient.get('/tokens/get_my_token/'); setCurrentToken(response.data); } catch (err) { setCurrentToken(null); } }, []);
+    const fetchTodaysToken = useCallback(async (silent = false) => { try { const response = await apiClient.get('/tokens/get_my_token/'); setCurrentToken(response.data); } catch (err) { setCurrentToken(null); } }, []);
     const fetchAllData = useCallback(async () => { try { const [tokenRes, clinicsRes, historyRes] = await Promise.all([ apiClient.get('/tokens/get_my_token/').catch(() => ({ data: null })), apiClient.get('/clinics_with_doctors/'), apiClient.get('/history/my_history/') ]); setCurrentToken(tokenRes.data); setClinics(clinicsRes.data); setHistory(historyRes.data); } catch (err) { setError('Could not load your dashboard data.'); } finally { setLoadingHistory(false); } }, []);
     
     useEffect(() => { 
         fetchAllData(); 
-        const interval = setInterval(fetchTodaysToken, 5000); // Refresh every 5 seconds 
-        return () => clearInterval(interval); 
+        const interval = setInterval(() => {
+            fetchTodaysToken(true);
+        }, 5000);
+        return () => clearInterval(interval);
     }, [fetchAllData, fetchTodaysToken]);
     
     useEffect(() => {
@@ -1190,8 +1100,10 @@ const PatientDashboardComponent = ({ loggedInUser, onLogout }) => {
                 setLiveQueue([]); 
             }
         };
-        fetchLiveQueue(); 
-        const queueInterval = setInterval(fetchLiveQueue, 3000); // Refresh every 3 seconds
+        fetchLiveQueue();
+        const queueInterval = setInterval(() => {
+            fetchLiveQueue();
+        }, 3000);
         return () => clearInterval(queueInterval);
     }, [currentToken, selectedDoctorId, bookingDate, today]); 
 

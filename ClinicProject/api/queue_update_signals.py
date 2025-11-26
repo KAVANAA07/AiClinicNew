@@ -17,7 +17,7 @@ def queue_update_signal(sender, instance, created, **kwargs):
         # Get affected tokens (same doctor, same date)
         affected_tokens = Token.objects.filter(
             doctor=instance.doctor,
-            appointment_date=instance.appointment_date,
+            appointment_date=instance.date,
             status__in=['confirmed', 'in_progress']
         ).order_by('appointment_time')
         

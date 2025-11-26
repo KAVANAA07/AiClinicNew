@@ -30,6 +30,8 @@ DEBUG = True
 ALLOWED_HOSTS = [
     '0a490259b696.ngrok-free.app',
     'b2ee8587838a.ngrok-free.app',
+    '1524a045dbf7.ngrok-free.app',
+    'fd49ac0f61be.ngrok-free.app',
     '*.ngrok-free.app',
     'localhost',
     '127.0.0.1',
@@ -68,7 +70,7 @@ ROOT_URLCONF = 'clinic_token_system.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -88,10 +90,12 @@ WSGI_APPLICATION = 'clinic_token_system.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3', # Use the default SQLite file name
+        'NAME': BASE_DIR / 'db.sqlite3',
+        'OPTIONS': {
+            'timeout': 20,  # Increase timeout for locked database
+        }
     }
 }
-# Removed dj_database_url and the 'RENDER' check
 
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -191,17 +195,17 @@ CORS_ALLOW_CREDENTIALS = True
 
 
 # --- 5. SMS/IVR CONFIGURATION (Dummy Keys for Simulation) ---
-TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', 'ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX')
-TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', 'your_auth_token')
-TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '+15005550006')
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
+TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 
 # --- AI / Summarization Backend Configuration ---
 # Choose the AI backend. Options:
 #  - 'local' : use a locally-loaded Hugging Face pipeline (requires transformers + torch installed)
 #  - 'hf'    : use Hugging Face Inference API (recommended if you don't want to host weights locally)
 #  - 'openai': use OpenAI-compatible API (optional)
-# AI backend selection
-AI_BACKEND = config('AI_BACKEND', 'hf')
+# AI backend selection - using fallback mode for now
+AI_BACKEND = config('AI_BACKEND', 'fallback')
 
 # Hugging Face Inference API settings (only used when AI_BACKEND == 'hf')
 # Example HF_INFERENCE_API_URL: https://api-inference.huggingface.co/models/sshleifer/distilbart-cnn-12-6
@@ -216,10 +220,13 @@ OPENAI_MODEL = config('OPENAI_MODEL', 'gpt-3.5-turbo')
 # --- 6. DJANGO-Q SETTINGS ---
 Q_CLUSTER = {
     'name': 'clinic-q-local',
-    'workers': 2,
+    'workers': 1,  # Reduced to 1 to prevent SQLite locking
     'timeout': 90,
     'retry': 120,
     'queue_limit': 50,
     'catch_up': False,
-    'orm': 'default',  # Use Django ORM instead of Redis
+    'orm': 'default',
+    'sync': False,  # Run tasks asynchronously
+    'save_limit': 100,  # Limit saved task results
+    'max_attempts': 1,  # Don't retry failed tasks automatically
 }

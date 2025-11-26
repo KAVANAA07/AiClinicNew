@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8f9fa; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .tokens-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; }
+        .token-card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #007bff; }
+        .token-card.waiting { border-left-color: #ffc107; }
+        .token-card.confirmed { border-left-color: #17a2b8; }
+        .token-card.in_consultancy { border-left-color: #28a745; }
+        .token-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .status-badge { padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+        .status-badge.waiting { background: #fff3cd; color: #856404; }
+        .status-badge.confirmed { background: #d1ecf1; color: #0c5460; }
+        .status-badge.in_consultancy { background: #d4edda; color: #155724; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; margin: 5px; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .consultation-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; }
+        .modal-content { background: white; margin: 2% auto; padding: 20px; width: 90%; max-width: 800px; border-radius: 8px; max-height: 90vh; overflow-y: auto; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; font-weight: 600; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; }
+        .form-row { display: flex; gap: 10px; }
+        .timing-buttons { display: flex; gap: 10px; margin: 10px 0; }
+        .timing-btn { padding: 8px 16px; border: 2px solid #007bff; background: white; color: #007bff; border-radius: 4px; cursor: pointer; }
+        .timing-btn.active { background: #007bff; color: white; }
+        .prescription-item { background: #f8f9fa; padding: 15px; border-radius: 4px; margin: 10px 0; border: 1px solid #e9ecef; }
+        .prescription-preview { background: #e9ecef; padding: 10px; border-radius: 4px; font-style: italic; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Doctor Dashboard</h1>
+            <p>Welcome, Dr. {{ user.doctor.name }}</p>
+        </div>
+
+        <div class="tokens-grid">
+            {% for token in tokens %}
+            <div class="token-card {{ token.status }}">
+                <div class="token-header">
+                    <h3>{{ token.patient.name }}</h3>
+                    <span class="status-badge {{ token.status }}">{{ token.status|upper }}</span>
+                </div>
+                <div class="token-details">
+                    <p><strong>Token:</strong> {{ token.token_number|default:"Walk-in" }}</p>
+                    <p><strong>Age:</strong> {{ token.patient.age }}</p>
+                    <p><strong>Phone:</strong> {{ token.patient.phone_number }}</p>
+                    {% if token.appointment_time %}
+                    <p><strong>Time:</strong> {{ token.appointment_time }}</p>
+                    {% endif %}
+                </div>
+                <div class="token-actions">
+                    {% if token.status == 'waiting' or token.status == 'confirmed' %}
+                    <button class="btn btn-primary" onclick="updateStatus({{ token.id }}, 'in_consultancy')">Start Consultation</button>
+                    {% endif %}
+                    {% if token.status == 'in_consultancy' %}
+                    <button class="btn btn-success" onclick="openConsultation({{ token.id }}, '{{ token.patient.name }}', {{ token.patient.age }}, '{{ token.patient.phone_number }}')">Complete Consultation</button>
+                    {% endif %}
+                    {% if token.status != 'completed' and token.status != 'cancelled' %}
+                    <button class="btn btn-secondary" onclick="updateStatus({{ token.id }}, 'skipped')">Skip</button>
+                    {% endif %}
+                </div>
+            </div>
+            {% empty %}
+            <div style="grid-column: 1/-1; text-align: center; padding: 40px;">
+                <p>No patients in queue today</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Consultation Modal -->
+    <div id="consultationModal" class="consultation-modal">
+        <div class="modal-content">
+            <h2>Consultation</h2>
+            <form id="consultationForm">
+                {% csrf_token %}
+                <input type="hidden" id="patientId" name="patient">
+                
+                <div class="form-group">
+                    <label>Patient:</label>
+                    <p id="patientInfo"></p>
+                </div>
+
+                <div class="form-group">
+                    <label for="notes">Consultation Notes:</label>
+                    <textarea id="notes" name="notes" rows="6" placeholder="Enter consultation notes, diagnosis, examination findings..." required></textarea>
+                </div>
+
+                <div class="prescriptions-section">
+                    <h3>Prescriptions <span id="prescriptionCount">(0)</span></h3>
+                    <div id="prescriptionList"></div>
+                    
+                    <div class="prescription-form" style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                        <h4>Add Prescription</h4>
+                        <div class="form-row">
+                            <input type="text" id="medicineName" placeholder="Medicine Name" required>
+                            <input type="text" id="dosage" placeholder="Dosage (e.g., 500mg)" required>
+                            <input type="number" id="duration" placeholder="Days" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label>Timing:</label>
+                            <div class="timing-buttons">
+                                <button type="button" class="timing-btn active" data-timing="M">Morning (M)</button>
+                                <button type="button" class="timing-btn" data-timing="A">Afternoon (A)</button>
+                                <button type="button" class="timing-btn" data-timing="N">Night (N)</button>
+                                <button type="button" class="timing-btn" data-timing="custom">Custom</button>
+                            </div>
+                        </div>
+
+                        <div id="customTiming" style="display: none;">
+                            <div class="form-row">
+                                <label><input type="checkbox" id="morningCheck"> Morning <input type="time" id="morningTime"></label>
+                                <label><input type="checkbox" id="afternoonCheck"> Afternoon <input type="time" id="afternoonTime"></label>
+                                <label><input type="checkbox" id="eveningCheck"> Evening <input type="time" id="eveningTime"></label>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Morning Food:</label>
+                                <select id="morningFood">
+                                    <option value="after">After Food</option>
+                                    <option value="before">Before Food</option>
+                                    <option value="with">With Food</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Afternoon Food:</label>
+                                <select id="afternoonFood">
+                                    <option value="after">After Food</option>
+                                    <option value="before">Before Food</option>
+                                    <option value="with">With Food</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Evening Food:</label>
+                                <select id="eveningFood">
+                                    <option value="after">After Food</option>
+                                    <option value="before">Before Food</option>
+                                    <option value="with">With Food</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <textarea id="specialInstructions" placeholder="Special Instructions (optional)" rows="2"></textarea>
+                        </div>
+
+                        <div class="prescription-preview" id="prescriptionPreview">Fill in medicine details to see preview</div>
+
+                        <button type="button" class="btn btn-success" onclick="addPrescription()">Add Prescription</button>
+                    </div>
+                </div>
+
+                <div style="text-align: right; margin-top: 20px;">
+                    <button type="button" class="btn btn-secondary" onclick="closeConsultation()">Cancel</button>
+                    <button type="submit" class="btn btn-success">Complete Consultation</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let prescriptions = [];
+        let currentTiming = 'M';
+
+        // Timing button handlers
+        document.querySelectorAll('.timing-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.timing-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentTiming = this.dataset.timing;
+                document.getElementById('customTiming').style.display = currentTiming === 'custom' ? 'block' : 'none';
+                updatePreview();
+            });
+        });
+
+        // Update preview
+        function updatePreview() {
+            const medicine = document.getElementById('medicineName').value;
+            const dosage = document.getElementById('dosage').value;
+            const duration = document.getElementById('duration').value;
+            
+            if (medicine && dosage && duration) {
+                let timing = '';
+                if (currentTiming === 'M') timing = '1 morning after food';
+                else if (currentTiming === 'A') timing = '1 afternoon after food';
+                else if (currentTiming === 'N') timing = '1 evening after food';
+                else timing = 'custom timing';
+                
+                document.getElementById('prescriptionPreview').textContent = 
+                    `${medicine} ${dosage} - ${timing} for ${duration} days`;
+            } else {
+                document.getElementById('prescriptionPreview').textContent = 'Fill in medicine details to see preview';
+            }
+        }
+
+        // Add event listeners for preview update
+        ['medicineName', 'dosage', 'duration'].forEach(id => {
+            document.getElementById(id).addEventListener('input', updatePreview);
+        });
+
+        function updateStatus(tokenId, status) {
+            fetch(`/api/tokens/${tokenId}/update_status/`, {
+                method: 'PATCH',
+                headers: {
+                    'Authorization': `Token ${localStorage.getItem('token')}`,
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify({ status: status })
+            }).then(() => location.reload());
+        }
+
+        function openConsultation(tokenId, patientName, patientAge, patientPhone) {
+            document.getElementById('patientId').value = tokenId;
+            document.getElementById('patientInfo').textContent = `${patientName}, Age: ${patientAge}, Phone: ${patientPhone}`;
+            document.getElementById('consultationModal').style.display = 'block';
+        }
+
+        function closeConsultation() {
+            document.getElementById('consultationModal').style.display = 'none';
+            prescriptions = [];
+            updatePrescriptionList();
+        }
+
+        function addPrescription() {
+            const medicine = document.getElementById('medicineName').value;
+            const dosage = document.getElementById('dosage').value;
+            const duration = document.getElementById('duration').value;
+            
+            if (!medicine || !dosage || !duration) {
+                alert('Please fill in all required fields');
+                return;
+            }
+
+            const prescription = {
+                medicine_name: medicine,
+                dosage: dosage,
+                duration_days: parseInt(duration),
+                timing_type: currentTiming,
+                timing_morning: currentTiming === 'M' || (currentTiming === 'custom' && document.getElementById('morningCheck').checked),
+                timing_afternoon: currentTiming === 'A' || (currentTiming === 'custom' && document.getElementById('afternoonCheck').checked),
+                timing_evening: currentTiming === 'N' || (currentTiming === 'custom' && document.getElementById('eveningCheck').checked),
+                morning_time: document.getElementById('morningTime').value || null,
+                afternoon_time: document.getElementById('afternoonTime').value || null,
+                evening_time: document.getElementById('eveningTime').value || null,
+                morning_food: document.getElementById('morningFood').value,
+                afternoon_food: document.getElementById('afternoonFood').value,
+                evening_food: document.getElementById('eveningFood').value,
+                special_instructions: document.getElementById('specialInstructions').value
+            };
+
+            prescriptions.push(prescription);
+            updatePrescriptionList();
+            
+            // Clear form
+            ['medicineName', 'dosage', 'duration', 'specialInstructions'].forEach(id => {
+                document.getElementById(id).value = '';
+            });
+            updatePreview();
+        }
+
+        function updatePrescriptionList() {
+            const list = document.getElementById('prescriptionList');
+            const count = document.getElementById('prescriptionCount');
+            count.textContent = `(${prescriptions.length})`;
+            
+            list.innerHTML = prescriptions.map((p, i) => `
+                <div class="prescription-item">
+                    <strong>${p.medicine_name} ${p.dosage}</strong> - ${p.timing_type} timing for ${p.duration_days} days
+                    <button type="button" class="btn btn-secondary" style="float: right;" onclick="removePrescription(${i})">Remove</button>
+                </div>
+            `).join('');
+        }
+
+        function removePrescription(index) {
+            prescriptions.splice(index, 1);
+            updatePrescriptionList();
+        }
+
+        document.getElementById('consultationForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                patient: document.getElementById('patientId').value,
+                notes: document.getElementById('notes').value,
+                prescription_items: prescriptions
+            };
+
+            fetch('/api/consultations/create/', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Token ${localStorage.getItem('token')}`,
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value
+                },
+                body: JSON.stringify(formData)
+            }).then(response => {
+                if (response.ok) {
+                    alert('Consultation completed successfully!');
+                    closeConsultation();
+                    location.reload();
+                } else {
+                    alert('Error creating consultation');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -103,7 +103,7 @@ class WaitingTimeStatusView(APIView):
                 created_at__date__gte=start_date,
                 created_at__date__lt=end_date,
                 status='completed',
-                consultation_start_time__isnull=False
+                completed_at__isnull=False
             ).count()
             
             return Response({
@@ -118,3 +118,52 @@ class WaitingTimeStatusView(APIView):
         except Exception as e:
             logger.error(f"Error checking waiting time status: {e}")
             return Response({'error': 'Failed to check system status'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class PublicPredictWaitingTimeView(APIView):
+    permission_classes = [permissions.AllowAny]
+    
+    def get(self, request, doctor_id):
+        """Get predicted waiting time for a specific doctor (public access)"""
+        try:
+            doctor = Doctor.objects.get(id=doctor_id)
+            appointment_time_str = request.query_params.get('appointment_time')
+            appointment_time = None
+            
+            if appointment_time_str:
+                try:
+                    from datetime import datetime
+                    appointment_time = datetime.strptime(appointment_time_str, '%H:%M').time()
+                except ValueError:
+                    pass
+            
+            predicted_time = waiting_time_predictor.predict_waiting_time(
+                doctor_id, 
+                for_appointment_time=appointment_time
+            )
+            
+            if predicted_time is None:
+                return Response({
+                    'error': 'Waiting time prediction not available. Model may not be trained yet.'
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            
+            # Get current queue info
+            current_queue = Token.objects.filter(
+                doctor_id=doctor_id,
+                created_at__date=timezone.now().date(),
+                status__in=['waiting', 'confirmed', 'in_consultation']
+            ).count()
+            
+            return Response({
+                'doctor_id': doctor_id,
+                'doctor_name': doctor.name,
+                'predicted_waiting_time_minutes': predicted_time,
+                'current_queue_length': current_queue,
+                'appointment_time': appointment_time_str,
+                'prediction_timestamp': timezone.now().isoformat()
+            })
+            
+        except Doctor.DoesNotExist:
+            return Response({'error': 'Doctor not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Error predicting waiting time: {e}")
+            return Response({'error': 'Failed to predict waiting time'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

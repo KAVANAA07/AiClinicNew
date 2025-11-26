@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctor Dashboard - Prescription System</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+        }
+        
+        /* Include all the CSS from the separate files */
+        .prescription-form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .form-row input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .timing-section {
+            margin-bottom: 20px;
+        }
+        
+        .timing-section h4 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .timing-buttons {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .timing-buttons button {
+            padding: 8px 16px;
+            border: 2px solid #007bff;
+            background: white;
+            color: #007bff;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .timing-buttons button.active {
+            background: #007bff;
+            color: white;
+        }
+        
+        .custom-timing {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            border: 1px solid #e9ecef;
+        }
+        
+        .timing-checkboxes {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .custom-times {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .food-timing-section {
+            margin-bottom: 20px;
+        }
+        
+        .food-timing-grid {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .food-timing-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .food-timing-item select {
+            padding: 6px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        .prescription-preview {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .preview-text {
+            margin: 0;
+            font-style: italic;
+            color: #6c757d;
+        }
+        
+        .add-prescription-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .consultation-form-container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .consultation-header {
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+        
+        .notes-section textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 120px;
+        }
+        
+        .prescription-list {
+            margin-bottom: 20px;
+        }
+        
+        .prescription-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        
+        .remove-prescription-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 15px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .cancel-btn {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .submit-btn {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState } = React;
+
+        // PrescriptionForm Component
+        const PrescriptionForm = ({ onAddPrescription }) => {
+            const [prescription, setPrescription] = useState({
+                medicine_name: '',
+                dosage: '',
+                duration_days: '',
+                timing_type: 'M',
+                timing_morning: true,
+                timing_afternoon: false,
+                timing_evening: false,
+                morning_time: '',
+                afternoon_time: '',
+                evening_time: '',
+                morning_food: 'after',
+                afternoon_food: 'after',
+                evening_food: 'after',
+                special_instructions: ''
+            });
+
+            const handleTimingTypeChange = (type) => {
+                let newState = { ...prescription, timing_type: type };
+                
+                switch(type) {
+                    case 'M':
+                        newState = { ...newState, timing_morning: true, timing_afternoon: false, timing_evening: false };
+                        break;
+                    case 'A':
+                        newState = { ...newState, timing_morning: false, timing_afternoon: true, timing_evening: false };
+                        break;
+                    case 'N':
+                        newState = { ...newState, timing_morning: false, timing_afternoon: false, timing_evening: true };
+                        break;
+                    case 'custom':
+                        break;
+                }
+                
+                setPrescription(newState);
+            };
+
+            const getTimingPreview = () => {
+                const times = [];
+                if (prescription.timing_morning) {
+                    const timeStr = prescription.timing_type === 'custom' && prescription.morning_time ? 
+                        ` at ${prescription.morning_time}` : '';
+                    const foodStr = prescription.morning_food ? ` ${prescription.morning_food} food` : '';
+                    times.push(`1 morning${timeStr}${foodStr}`);
+                }
+                if (prescription.timing_afternoon) {
+                    const timeStr = prescription.timing_type === 'custom' && prescription.afternoon_time ? 
+                        ` at ${prescription.afternoon_time}` : '';
+                    const foodStr = prescription.afternoon_food ? ` ${prescription.afternoon_food} food` : '';
+                    times.push(`1 afternoon${timeStr}${foodStr}`);
+                }
+                if (prescription.timing_evening) {
+                    const timeStr = prescription.timing_type === 'custom' && prescription.evening_time ? 
+                        ` at ${prescription.evening_time}` : '';
+                    const foodStr = prescription.evening_food ? ` ${prescription.evening_food} food` : '';
+                    times.push(`1 evening${timeStr}${foodStr}`);
+                }
+                return times.length > 0 ? times.join(' and ') : 'as needed';
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (prescription.medicine_name && prescription.dosage && prescription.duration_days) {
+                    onAddPrescription(prescription);
+                    setPrescription({
+                        medicine_name: '',
+                        dosage: '',
+                        duration_days: '',
+                        timing_type: 'M',
+                        timing_morning: true,
+                        timing_afternoon: false,
+                        timing_evening: false,
+                        morning_time: '',
+                        afternoon_time: '',
+                        evening_time: '',
+                        morning_food: 'after',
+                        afternoon_food: 'after',
+                        evening_food: 'after',
+                        special_instructions: ''
+                    });
+                }
+            };
+
+            return (
+                <div className="prescription-form">
+                    <h3>Add Prescription</h3>
+                    <form onSubmit={handleSubmit}>
+                        <div className="form-row">
+                            <input
+                                type="text"
+                                placeholder="Medicine Name"
+                                value={prescription.medicine_name}
+                                onChange={(e) => setPrescription({...prescription, medicine_name: e.target.value})}
+                                required
+                            />
+                            <input
+                                type="text"
+                                placeholder="Dosage (e.g., 500mg)"
+                                value={prescription.dosage}
+                                onChange={(e) => setPrescription({...prescription, dosage: e.target.value})}
+                                required
+                            />
+                            <input
+                                type="number"
+                                placeholder="Days"
+                                value={prescription.duration_days}
+                                onChange={(e) => setPrescription({...prescription, duration_days: e.target.value})}
+                                required
+                            />
+                        </div>
+
+                        <div className="timing-section">
+                            <h4>Timing Options</h4>
+                            <div className="timing-buttons">
+                                <button
+                                    type="button"
+                                    className={prescription.timing_type === 'M' ? 'active' : ''}
+                                    onClick={() => handleTimingTypeChange('M')}
+                                >
+                                    Morning Only (M)
+                                </button>
+                                <button
+                                    type="button"
+                                    className={prescription.timing_type === 'A' ? 'active' : ''}
+                                    onClick={() => handleTimingTypeChange('A')}
+                                >
+                                    Afternoon Only (A)
+                                </button>
+                                <button
+                                    type="button"
+                                    className={prescription.timing_type === 'N' ? 'active' : ''}
+                                    onClick={() => handleTimingTypeChange('N')}
+                                >
+                                    Night Only (N)
+                                </button>
+                                <button
+                                    type="button"
+                                    className={prescription.timing_type === 'custom' ? 'active' : ''}
+                                    onClick={() => handleTimingTypeChange('custom')}
+                                >
+                                    Custom Timing
+                                </button>
+                            </div>
+
+                            {prescription.timing_type === 'custom' && (
+                                <div className="custom-timing">
+                                    <div className="timing-checkboxes">
+                                        <label>
+                                            <input
+                                                type="checkbox"
+                                                checked={prescription.timing_morning}
+                                                onChange={(e) => setPrescription({...prescription, timing_morning: e.target.checked})}
+                                            />
+                                            Morning
+                                        </label>
+                                        <label>
+                                            <input
+                                                type="checkbox"
+                                                checked={prescription.timing_afternoon}
+                                                onChange={(e) => setPrescription({...prescription, timing_afternoon: e.target.checked})}
+                                            />
+                                            Afternoon
+                                        </label>
+                                        <label>
+                                            <input
+                                                type="checkbox"
+                                                checked={prescription.timing_evening}
+                                                onChange={(e) => setPrescription({...prescription, timing_evening: e.target.checked})}
+                                            />
+                                            Evening
+                                        </label>
+                                    </div>
+
+                                    <div className="custom-times">
+                                        {prescription.timing_morning && (
+                                            <input
+                                                type="time"
+                                                value={prescription.morning_time}
+                                                onChange={(e) => setPrescription({...prescription, morning_time: e.target.value})}
+                                            />
+                                        )}
+                                        {prescription.timing_afternoon && (
+                                            <input
+                                                type="time"
+                                                value={prescription.afternoon_time}
+                                                onChange={(e) => setPrescription({...prescription, afternoon_time: e.target.value})}
+                                            />
+                                        )}
+                                        {prescription.timing_evening && (
+                                            <input
+                                                type="time"
+                                                value={prescription.evening_time}
+                                                onChange={(e) => setPrescription({...prescription, evening_time: e.target.value})}
+                                            />
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="food-timing-section">
+                            <h4>Food Instructions</h4>
+                            <div className="food-timing-grid">
+                                {prescription.timing_morning && (
+                                    <div className="food-timing-item">
+                                        <label>Morning Dose:</label>
+                                        <select
+                                            value={prescription.morning_food}
+                                            onChange={(e) => setPrescription({...prescription, morning_food: e.target.value})}
+                                        >
+                                            <option value="before">Before Food</option>
+                                            <option value="after">After Food</option>
+                                            <option value="with">With Food</option>
+                                        </select>
+                                    </div>
+                                )}
+                                {prescription.timing_afternoon && (
+                                    <div className="food-timing-item">
+                                        <label>Afternoon Dose:</label>
+                                        <select
+                                            value={prescription.afternoon_food}
+                                            onChange={(e) => setPrescription({...prescription, afternoon_food: e.target.value})}
+                                        >
+                                            <option value="before">Before Food</option>
+                                            <option value="after">After Food</option>
+                                            <option value="with">With Food</option>
+                                        </select>
+                                    </div>
+                                )}
+                                {prescription.timing_evening && (
+                                    <div className="food-timing-item">
+                                        <label>Evening Dose:</label>
+                                        <select
+                                            value={prescription.evening_food}
+                                            onChange={(e) => setPrescription({...prescription, evening_food: e.target.value})}
+                                        >
+                                            <option value="before">Before Food</option>
+                                            <option value="after">After Food</option>
+                                            <option value="with">With Food</option>
+                                        </select>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="instructions-section">
+                            <textarea
+                                placeholder="Special Instructions (optional)"
+                                value={prescription.special_instructions}
+                                onChange={(e) => setPrescription({...prescription, special_instructions: e.target.value})}
+                                rows="3"
+                            />
+                        </div>
+
+                        <div className="prescription-preview">
+                            <h4>Preview:</h4>
+                            <p className="preview-text">
+                                {prescription.medicine_name && prescription.dosage ? 
+                                    `${prescription.medicine_name} ${prescription.dosage} - ${getTimingPreview()} for ${prescription.duration_days || '?'} days` :
+                                    'Fill in medicine details to see preview'
+                                }
+                            </p>
+                        </div>
+
+                        <button type="submit" className="add-prescription-btn">
+                            Add Prescription
+                        </button>
+                    </form>
+                </div>
+            );
+        };
+
+        // Demo App
+        const DemoApp = () => {
+            const [prescriptions, setPrescriptions] = useState([]);
+
+            const handleAddPrescription = (prescription) => {
+                setPrescriptions(prev => [...prev, prescription]);
+                alert('Prescription added successfully!');
+            };
+
+            return (
+                <div className="consultation-form-container">
+                    <div className="consultation-header">
+                        <h2>Doctor Dashboard - Prescription System Demo</h2>
+                        <p>Test the new prescription timing options with M/A/N defaults and custom timing</p>
+                    </div>
+
+                    <PrescriptionForm onAddPrescription={handleAddPrescription} />
+
+                    {prescriptions.length > 0 && (
+                        <div>
+                            <h3>Added Prescriptions ({prescriptions.length})</h3>
+                            {prescriptions.map((prescription, index) => (
+                                <div key={index} className="prescription-item">
+                                    <div className="prescription-content">
+                                        <p><strong>{prescription.medicine_name} {prescription.dosage}</strong></p>
+                                        <p>Timing: {prescription.timing_type === 'custom' ? 'Custom' : prescription.timing_type}</p>
+                                        <p>Duration: {prescription.duration_days} days</p>
+                                        {prescription.special_instructions && (
+                                            <p>Instructions: {prescription.special_instructions}</p>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<DemoApp />, document.getElementById('root'));
+    </script>
+</body>
+</html>

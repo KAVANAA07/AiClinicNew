@@ -109,10 +109,23 @@ def summarize_via_openai(prompt: str, max_length: int = 512, min_length: int = 6
     return [{'summary_text': j['choices'][0]['message']['content']}] if 'choices' in j else [{'summary_text': json.dumps(j)}]
 
 
+def summarize_via_fallback(prompt: str, max_length: int = 512, min_length: int = 64) -> Any:
+    """Simple fallback summarizer that doesn't require external dependencies."""
+    lines = prompt.split('\n')
+    medical_lines = [line.strip() for line in lines if line.strip() and any(word in line.lower() for word in ['patient', 'doctor', 'notes', 'prescription', 'symptoms', 'diagnosis', 'treatment', 'consultation', 'examination'])]
+    
+    if medical_lines:
+        summary = ' '.join(medical_lines[:3])  # Take first 3 relevant lines
+        if len(summary) > max_length:
+            summary = summary[:max_length-3] + '...'
+        return [{'summary_text': f'Medical Summary: {summary}'}]
+    else:
+        return [{'summary_text': 'Patient medical history summary available. Please review consultation notes for details.'}]
+
 def summarize_text(prompt: str, max_length: int = 512, min_length: int = 64) -> Any:
     """Main entry point: dispatches to the configured backend.
 
-    settings.AI_BACKEND: 'local' (default), 'hf' (Hugging Face Inference), or 'openai'
+    settings.AI_BACKEND: 'local' (default), 'hf' (Hugging Face Inference), 'openai', or 'fallback'
     """
     backend = getattr(settings, 'AI_BACKEND', 'local')
     if backend == 'local':
@@ -121,6 +134,8 @@ def summarize_text(prompt: str, max_length: int = 512, min_length: int = 64) -> 
         return summarize_via_hf_inference(prompt, max_length, min_length)
     elif backend == 'openai':
         return summarize_via_openai(prompt, max_length, min_length)
+    elif backend == 'fallback':
+        return summarize_via_fallback(prompt, max_length, min_length)
     else:
         raise RuntimeError(f'Unknown AI_BACKEND: {backend}')
 
@@ -134,6 +149,8 @@ def is_model_loaded() -> bool:
         return bool(getattr(settings, 'HF_API_TOKEN', None))
     if backend == 'openai':
         return bool(getattr(settings, 'OPENAI_API_KEY', None))
+    if backend == 'fallback':
+        return True  # Fallback is always available
     return False
 
 
@@ -145,6 +162,8 @@ def get_model_name() -> Optional[str]:
         return 'facebook/bart-large-cnn'
     if backend == 'openai':
         return getattr(settings, 'OPENAI_MODEL', 'openai')
+    if backend == 'fallback':
+        return 'extractive_fallback_summarizer'
     return None
 
 

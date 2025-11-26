@@ -119,15 +119,15 @@ class LiveDashboardOverviewView(APIView):
             
             # Get all doctors with appointments today
             doctors_with_appointments = Doctor.objects.filter(
-                token__appointment_date=today
+                token__date=today
             ).distinct()
             
             dashboard_data = {
                 'clinic_overview': {
-                    'total_appointments_today': Token.objects.filter(appointment_date=today).count(),
-                    'completed_today': Token.objects.filter(appointment_date=today, status='completed').count(),
-                    'in_progress': Token.objects.filter(appointment_date=today, status='in_progress').count(),
-                    'pending': Token.objects.filter(appointment_date=today, status='confirmed').count(),
+                    'total_appointments_today': Token.objects.filter(date=today).count(),
+                    'completed_today': Token.objects.filter(date=today, status='completed').count(),
+                    'in_progress': Token.objects.filter(date=today, status='in_consultancy').count(),
+                    'pending': Token.objects.filter(date=today, status='confirmed').count(),
                 },
                 'doctors_status': [],
                 'live_wait_times': advanced_wait_predictor.get_live_updates_data(),
@@ -170,7 +170,7 @@ class UpdateTokenStatusView(APIView):
             token = Token.objects.get(id=token_id)
             new_status = request.data.get('status')
             
-            if new_status not in ['confirmed', 'in_progress', 'completed', 'cancelled']:
+            if new_status not in ['waiting', 'confirmed', 'in_consultancy', 'completed', 'cancelled', 'skipped']:
                 return Response({
                     'success': False,
                     'error': 'Invalid status'
@@ -183,12 +183,14 @@ class UpdateTokenStatusView(APIView):
             if new_status == 'completed' and old_status != 'completed':
                 token.completed_at = timezone.now()
             
+            # Flag for manual status update (staff/doctor action)
+            token._allow_status_change = True
             token.save()
             
             # Get updated wait times for affected tokens
             affected_tokens = Token.objects.filter(
                 doctor=token.doctor,
-                appointment_date=token.appointment_date,
+                appointment_date=token.date,
                 appointment_time__gt=token.appointment_time,
                 status__in=['confirmed', 'in_progress']
             )

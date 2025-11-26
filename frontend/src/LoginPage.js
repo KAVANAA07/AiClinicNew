@@ -16,7 +16,7 @@ function LoginPage({ apiClient, onLoginSuccess, onSwitchToRegister, onBackToHome
             return;
         }
 
-        const loginUrl = activeTab === 'patient' ? '/login/' : '/login/staff/';
+        const loginUrl = activeTab === 'patient' ? '/login/' : '/staff-login/';
         
         try {
             const response = await apiClient.post(loginUrl, { username, password });

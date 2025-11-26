@@ -35,15 +35,52 @@ class PatientSerializer(serializers.ModelSerializer):
 
 # --- UPDATED: Prescription & Consultation Serializers ---
 class PrescriptionItemSerializer(serializers.ModelSerializer):
+    natural_description = serializers.CharField(source='get_natural_description', read_only=True)
+    
     class Meta:
         model = PrescriptionItem
-        fields = ['id', 'medicine_name', 'dosage', 'duration_days', 'timing_morning', 'timing_afternoon', 'timing_evening']
+        fields = [
+            'id', 'medicine_name', 'dosage', 'duration_days', 
+            'timing_type', 'frequency_per_day',
+            'timing_morning', 'timing_afternoon', 'timing_evening', 'timing_night',
+            'timing_1_time', 'timing_2_time', 'timing_3_time', 'timing_4_time',
+            'timing_5_time', 'timing_6_time', 'timing_7_time', 'timing_8_time',
+            'timing_1_food', 'timing_2_food', 'timing_3_food', 'timing_4_food',
+            'timing_5_food', 'timing_6_food', 'timing_7_food', 'timing_8_food',
+            'morning_time', 'afternoon_time', 'evening_time', 'night_time',
+            'morning_food', 'afternoon_food', 'evening_food', 'night_food',
+            'special_instructions', 'natural_description'
+        ]
+
+class ConsultationCreateSerializer(serializers.ModelSerializer):
+    prescription_items = PrescriptionItemSerializer(many=True, required=False)
+    
+    class Meta:
+        model = Consultation
+        fields = ['patient', 'notes', 'prescription_items']
+    
+    def create(self, validated_data):
+        prescription_items_data = validated_data.pop('prescription_items', [])
+        
+        # Get doctor from request user
+        doctor = self.context['request'].user.doctor
+        consultation = Consultation.objects.create(
+            doctor=doctor,
+            **validated_data
+        )
+        
+        # Create prescription items
+        for prescription_data in prescription_items_data:
+            PrescriptionItem.objects.create(
+                consultation=consultation,
+                **prescription_data
+            )
+        
+        return consultation
 
 class ConsultationSerializer(serializers.ModelSerializer):
-    # Nested doctor serializer to get name, not just ID
     doctor = DoctorSerializer(read_only=True)
     prescription_items = PrescriptionItemSerializer(many=True, read_only=True)
-    # Also nesting patient can be useful for verification
     patient = PatientSerializer(read_only=True)
 
     class Meta:

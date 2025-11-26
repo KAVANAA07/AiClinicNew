@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Coordinate Picker</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+        #map { height: 500px; width: 100%; border: 2px solid #007cba; border-radius: 5px; }
+        .info-box { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px; 
+            border: 1px solid #dee2e6; 
+        }
+        .coord-display { 
+            font-size: 18px; 
+            font-weight: bold; 
+            color: #007cba; 
+            margin: 10px 0; 
+        }
+        .btn { 
+            background: #28a745; 
+            color: white; 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin: 5px; 
+        }
+        .btn:hover { background: #218838; }
+        .btn-copy { background: #007cba; }
+        .btn-copy:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <h2>🗺️ Click on Map to Select Clinic Location</h2>
+    
+    <div class="info-box">
+        <strong>Instructions:</strong>
+        <ol>
+            <li>Click on your clinic's exact location on the map below</li>
+            <li>The coordinates will appear in the box</li>
+            <li>Click "Copy Coordinates" to copy them</li>
+            <li>Go back to Django admin and paste them in the Latitude/Longitude fields</li>
+        </ol>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="info-box">
+        <div class="coord-display" id="coordinates">
+            Click on the map to select coordinates
+        </div>
+        <button class="btn btn-copy" onclick="copyCoordinates()" id="copyBtn" style="display:none;">
+            📋 Copy Coordinates
+        </button>
+        <button class="btn" onclick="useCurrentLocation()">
+            📍 Use My Current Location
+        </button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        var urlParams = new URLSearchParams(window.location.search);
+        var initialLat = parseFloat(urlParams.get('lat')) || 12.9716;
+        var initialLng = parseFloat(urlParams.get('lng')) || 77.5946;
+        
+        var map = L.map('map').setView([initialLat, initialLng], 15);
+        
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        
+        var marker = L.marker([initialLat, initialLng], {draggable: true}).addTo(map);
+        
+        var selectedLat = initialLat;
+        var selectedLng = initialLng;
+        
+        function updateCoordinates(lat, lng) {
+            selectedLat = lat;
+            selectedLng = lng;
+            document.getElementById('coordinates').innerHTML = 
+                'Latitude: ' + lat.toFixed(6) + '<br>Longitude: ' + lng.toFixed(6);
+            document.getElementById('copyBtn').style.display = 'inline-block';
+        }
+        
+        updateCoordinates(initialLat, initialLng);
+        
+        map.on('click', function(e) {
+            var lat = e.latlng.lat;
+            var lng = e.latlng.lng;
+            marker.setLatLng([lat, lng]);
+            updateCoordinates(lat, lng);
+        });
+        
+        marker.on('dragend', function(e) {
+            var lat = e.target.getLatLng().lat;
+            var lng = e.target.getLatLng().lng;
+            updateCoordinates(lat, lng);
+        });
+        
+        function copyCoordinates() {
+            var coordText = selectedLat.toFixed(6) + ', ' + selectedLng.toFixed(6);
+            
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(coordText).then(function() {
+                    alert('Coordinates copied to clipboard!\\n\\n' + coordText + '\\n\\nNow go back to Django admin and paste them in the Latitude and Longitude fields.');
+                });
+            } else {
+                var textArea = document.createElement('textarea');
+                textArea.value = coordText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Coordinates copied!\\n\\n' + coordText + '\\n\\nNow go back to Django admin and paste them in the Latitude and Longitude fields.');
+            }
+        }
+        
+        function useCurrentLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    var lat = position.coords.latitude;
+                    var lng = position.coords.longitude;
+                    
+                    map.setView([lat, lng], 16);
+                    marker.setLatLng([lat, lng]);
+                    updateCoordinates(lat, lng);
+                    
+                    alert('Using your current location!\\nMake sure you are at the clinic before using this.');
+                }, function(error) {
+                    alert('Could not get your location. Please click on the map instead.');
+                });
+            } else {
+                alert('Geolocation is not supported by this browser. Please click on the map instead.');
+            }
+        }
+    </script>
+</body>
+</html>
