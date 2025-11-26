@@ -4,6 +4,19 @@
 
 ---
 
+## ⚠️ FIRST TIME? READ THIS FIRST!
+
+**If you don't have `QUICK_UPDATE.bat` file yet:**
+
+1. Open Command Prompt (Windows Key + R, type `cmd`)
+2. Go to project: `cd C:\Users\YourName\AiClinicNew`
+3. Run: `git pull origin main`
+4. Now you have the batch file! Continue below...
+
+**See `FIRST_TIME_UPDATE.md` for detailed first-time setup.**
+
+---
+
 ## 🖱️ METHOD 1: Using Batch File (EASIEST - Just 2 Clicks!)
 
 ### **Step 1: Find the File**
